@@ -21,6 +21,8 @@ import {
     AUTODISCOVERY_FLUXER_DOMAIN,
     FLUXER_TOKEN,
     FLUXER_API_URL,
+    FLUXER_CHANNEL_CACHE_LIMIT,
+    FLUXER_GUILD_CACHE_LIMIT,
     FLUXER_MEDIA_URL,
     FLUXER_STATIC_CDN_URL,
     FLUXER_INVITE_URL,
@@ -70,6 +72,10 @@ const startFluxerClient = async ({
     const clientOptions: ClientOptions = {
         intents: 0,
         waitForGuilds: true,
+        cache: {
+            guilds: FLUXER_GUILD_CACHE_LIMIT,
+            channels: FLUXER_CHANNEL_CACHE_LIMIT,
+        },
         presence: {
             status: 'online',
             customStatus: {

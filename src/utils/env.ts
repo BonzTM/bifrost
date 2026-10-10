@@ -75,6 +75,14 @@ export const QUEUE_TTL_MS = process.env.BF_QUEUE_TTL_MS
     ? Number(process.env.BF_QUEUE_TTL_MS)
     : 5 * 60 * 1000;
 
+export const FLUXER_GUILD_CACHE_LIMIT = process.env.BF_FLUXER_GUILD_CACHE_LIMIT
+    ? Number(process.env.BF_FLUXER_GUILD_CACHE_LIMIT)
+    : 0;
+export const FLUXER_CHANNEL_CACHE_LIMIT = process.env
+    .BF_FLUXER_CHANNEL_CACHE_LIMIT
+    ? Number(process.env.BF_FLUXER_CHANNEL_CACHE_LIMIT)
+    : 0;
+
 function parseBool(value: string | undefined): boolean {
     return ['true', '1', 'yes'].includes((value ?? '').toLowerCase());
 }
