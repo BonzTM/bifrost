@@ -41,8 +41,14 @@ export default abstract class FluxerCommandHandler extends CommandHandler<
     ): Promise<boolean> {
         let authorMember: GuildMember | null = null;
         try {
+            const guild = message.guild ?? (await message.resolveGuild());
+            if (!guild) {
+                logger.warn(
+                    `Could not resolve Fluxer guild ${message.guildId} for member lookup`
+                );
+            }
             authorMember =
-                (await message.guild?.fetchMember(message.author.id)) || null;
+                (await guild?.fetchMember(message.author.id)) || null;
         } catch (error) {
             logger.error(
                 'Error fetching member for FluxerCommandHandler:',
