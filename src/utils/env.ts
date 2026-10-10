@@ -81,6 +81,10 @@ function parseBool(value: string | undefined): boolean {
 
 export const DELETE_INVOCATION = parseBool(process.env.BF_DELETE_INVOCATION);
 
+export const DISABLE_MESSAGE_QUEUE = parseBool(
+    process.env.BF_DISABLE_MESSAGE_QUEUE
+);
+
 export const DISCORD_OWNER_ID = process.env.BF_DISCORD_OWNER_ID || null;
 export const FLUXER_OWNER_ID = process.env.BF_FLUXER_OWNER_ID || null;
 
