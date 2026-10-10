@@ -75,11 +75,23 @@ export const QUEUE_TTL_MS = process.env.BF_QUEUE_TTL_MS
     ? Number(process.env.BF_QUEUE_TTL_MS)
     : 5 * 60 * 1000;
 
+export const FLUXER_GUILD_CACHE_LIMIT = process.env.BF_FLUXER_GUILD_CACHE_LIMIT
+    ? Number(process.env.BF_FLUXER_GUILD_CACHE_LIMIT)
+    : 0;
+export const FLUXER_CHANNEL_CACHE_LIMIT = process.env
+    .BF_FLUXER_CHANNEL_CACHE_LIMIT
+    ? Number(process.env.BF_FLUXER_CHANNEL_CACHE_LIMIT)
+    : 0;
+
 function parseBool(value: string | undefined): boolean {
     return ['true', '1', 'yes'].includes((value ?? '').toLowerCase());
 }
 
 export const DELETE_INVOCATION = parseBool(process.env.BF_DELETE_INVOCATION);
+
+export const DISABLE_MESSAGE_QUEUE = parseBool(
+    process.env.BF_DISABLE_MESSAGE_QUEUE
+);
 
 export const DISCORD_OWNER_ID = process.env.BF_DISCORD_OWNER_ID || null;
 export const FLUXER_OWNER_ID = process.env.BF_FLUXER_OWNER_ID || null;

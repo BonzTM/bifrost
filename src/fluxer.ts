@@ -3,6 +3,7 @@ import {
     ClientOptions,
     EmbedBuilder,
     Events,
+    Message,
     PartialMessage,
     TextChannel,
 } from '@fluxerjs/core';
@@ -20,6 +21,8 @@ import {
     AUTODISCOVERY_FLUXER_DOMAIN,
     FLUXER_TOKEN,
     FLUXER_API_URL,
+    FLUXER_CHANNEL_CACHE_LIMIT,
+    FLUXER_GUILD_CACHE_LIMIT,
     FLUXER_MEDIA_URL,
     FLUXER_STATIC_CDN_URL,
     FLUXER_INVITE_URL,
@@ -69,9 +72,13 @@ const startFluxerClient = async ({
     const clientOptions: ClientOptions = {
         intents: 0,
         waitForGuilds: true,
+        cache: {
+            guilds: FLUXER_GUILD_CACHE_LIMIT,
+            channels: FLUXER_CHANNEL_CACHE_LIMIT,
+        },
         presence: {
             status: 'online',
-            custom_status: {
+            customStatus: {
                 text: 'Bridging to Discord',
             },
         },
@@ -196,13 +203,24 @@ const startFluxerClient = async ({
         }
     });
 
-    client.on(Events.MessageUpdate, async (_oldMessage, newMessage) => {
-        if (newMessage.webhookId) return;
+    client.on(Events.MessageUpdate, async (_oldMessage, updatedMessage) => {
+        if (!updatedMessage.partial && updatedMessage.webhookId) return;
 
         const linkedMessage = await linkService.getMessageLinkByFluxerMessageId(
-            newMessage.id
+            updatedMessage.id
         );
         if (!linkedMessage) return;
+
+        let newMessage: Message;
+        try {
+            newMessage = updatedMessage.partial
+                ? await updatedMessage.fetch()
+                : updatedMessage;
+        } catch (error) {
+            logger.error('Error fetching updated Fluxer message:', error);
+            return;
+        }
+        if (newMessage.webhookId) return;
 
         const linkedChannel = await linkService.getChannelLinkById(
             linkedMessage.channelLinkId

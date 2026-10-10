@@ -41,8 +41,14 @@ export default abstract class FluxerCommandHandler extends CommandHandler<
     ): Promise<boolean> {
         let authorMember: GuildMember | null = null;
         try {
+            const guild = message.guild ?? (await message.resolveGuild());
+            if (!guild) {
+                logger.warn(
+                    `Could not resolve Fluxer guild ${message.guildId} for member lookup`
+                );
+            }
             authorMember =
-                (await message.guild?.fetchMember(message.author.id)) || null;
+                (await guild?.fetchMember(message.author.id)) || null;
         } catch (error) {
             logger.error(
                 'Error fetching member for FluxerCommandHandler:',
@@ -84,8 +90,14 @@ export default abstract class FluxerCommandHandler extends CommandHandler<
     }
 
     protected async requireOwner(message: Message): Promise<boolean> {
+        let guild = message.guild;
+        try {
+            guild ??= await message.resolveGuild();
+        } catch (error) {
+            logger.error('Error resolving guild for requireOwner:', error);
+        }
         if (
-            (message.guild as unknown as FluxerGuildWithOwner)?.ownerId !==
+            (guild as unknown as FluxerGuildWithOwner)?.ownerId !==
             message.author.id
         ) {
             await message.reply({

@@ -6,6 +6,8 @@ services:
         depends_on:
             postgres:
                 condition: service_healthy
+        #ports:
+        #    - '9092:9092'
         env_file:
             - .env
         environment:

@@ -18,6 +18,7 @@ import { LinkService } from './services/LinkService';
 import { WebhookService } from './services/WebhookService';
 import {
     DISCORD_APP_ID,
+    DISABLE_MESSAGE_QUEUE,
     DISCORD_HEALTH_URL,
     ENABLE_WEB_DASHBOARD,
     FLUXER_APP_ID,
@@ -48,7 +49,10 @@ const main = async () => {
     );
 
     const metricsService = new MetricsService(METRICS_PORT);
-    const queueService = new MessageQueueService(QUEUE_TTL_MS);
+    const queueService = DISABLE_MESSAGE_QUEUE
+        ? undefined
+        : new MessageQueueService(QUEUE_TTL_MS);
+    if (DISABLE_MESSAGE_QUEUE) logger.info('Message queue is disabled');
 
     const healthCheckService = new HealthCheckService(
         DISCORD_HEALTH_URL || null,
@@ -149,7 +153,7 @@ const main = async () => {
 
     healthCheckService.setOnDiscordRecovered(() => {
         queueService
-            .drain(webhookService, linkService)
+            ?.drain(webhookService, linkService)
             .catch((err) =>
                 logger.error('Queue drain on Discord recovery error:', err)
             );
@@ -157,7 +161,7 @@ const main = async () => {
     healthCheckService.setOnFluxerRecovered(() => {
         fluxerRestartAttempts = 0;
         queueService
-            .drain(webhookService, linkService)
+            ?.drain(webhookService, linkService)
             .catch((err) =>
                 logger.error('Queue drain on Fluxer recovery error:', err)
             );
