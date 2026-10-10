@@ -90,8 +90,14 @@ export default abstract class FluxerCommandHandler extends CommandHandler<
     }
 
     protected async requireOwner(message: Message): Promise<boolean> {
+        let guild = message.guild;
+        try {
+            guild ??= await message.resolveGuild();
+        } catch (error) {
+            logger.error('Error resolving guild for requireOwner:', error);
+        }
         if (
-            (message.guild as unknown as FluxerGuildWithOwner)?.ownerId !==
+            (guild as unknown as FluxerGuildWithOwner)?.ownerId !==
             message.author.id
         ) {
             await message.reply({

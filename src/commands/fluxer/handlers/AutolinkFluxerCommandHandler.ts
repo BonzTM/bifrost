@@ -77,9 +77,10 @@ export default class AutolinkFluxerCommandHandler extends FluxerCommandHandler {
 
         // Fetch all Fluxer text channels in this guild
         /* eslint-disable @typescript-eslint/no-explicit-any */
-        const allFluxerChannels: any[] = await (
-            message.guild as any
-        ).fetchChannels();
+        const fluxerGuild: any =
+            message.guild ?? (await message.resolveGuild());
+        const allFluxerChannels: any[] =
+            (await fluxerGuild?.fetchChannels()) ?? [];
         const fluxerTextChannels: ChannelInfo[] = allFluxerChannels
             .filter(
                 (ch: any) => ch.isTextBased() && !linkedFluxerIds.has(ch.id)
