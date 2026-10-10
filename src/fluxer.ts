@@ -3,6 +3,7 @@ import {
     ClientOptions,
     EmbedBuilder,
     Events,
+    Message,
     PartialMessage,
     TextChannel,
 } from '@fluxerjs/core';
@@ -71,7 +72,7 @@ const startFluxerClient = async ({
         waitForGuilds: true,
         presence: {
             status: 'online',
-            custom_status: {
+            customStatus: {
                 text: 'Bridging to Discord',
             },
         },
@@ -196,13 +197,24 @@ const startFluxerClient = async ({
         }
     });
 
-    client.on(Events.MessageUpdate, async (_oldMessage, newMessage) => {
-        if (newMessage.webhookId) return;
+    client.on(Events.MessageUpdate, async (_oldMessage, updatedMessage) => {
+        if (!updatedMessage.partial && updatedMessage.webhookId) return;
 
         const linkedMessage = await linkService.getMessageLinkByFluxerMessageId(
-            newMessage.id
+            updatedMessage.id
         );
         if (!linkedMessage) return;
+
+        let newMessage: Message;
+        try {
+            newMessage = updatedMessage.partial
+                ? await updatedMessage.fetch()
+                : updatedMessage;
+        } catch (error) {
+            logger.error('Error fetching updated Fluxer message:', error);
+            return;
+        }
+        if (newMessage.webhookId) return;
 
         const linkedChannel = await linkService.getChannelLinkById(
             linkedMessage.channelLinkId
