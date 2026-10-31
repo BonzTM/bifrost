@@ -46,6 +46,7 @@ const startDiscordClient = async ({
     discordStatsService,
     fluxerStatsService,
     dbStatsService,
+    extraIntents = [],
 }: {
     linkService: LinkService;
     webhookService: WebhookService;
@@ -57,12 +58,15 @@ const startDiscordClient = async ({
     discordStatsService: DiscordStatsService;
     fluxerStatsService: FluxerStatsService;
     dbStatsService: DbStatsService;
+    // Fork hook: intents the enabled add-ons need (src/addons/intents.ts).
+    extraIntents?: GatewayIntentBits[];
 }): Promise<Client> => {
     const client = new Client({
         intents: [
             GatewayIntentBits.Guilds,
             GatewayIntentBits.GuildMessages,
             GatewayIntentBits.MessageContent,
+            ...extraIntents,
         ],
         partials: [Partials.Message, Partials.Channel],
         presence: {

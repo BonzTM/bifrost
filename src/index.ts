@@ -35,10 +35,14 @@ import {
     generateFluxerBotInviteLink,
 } from './utils/generateBotInvite';
 import logger from './utils/logging/logger';
+import { addonDiscordIntents, requireAddonConfig, startAddons } from './addons';
 import DiscordStatsService from './services/statsService/DiscordStatsService';
 import FluxerStatsService from './services/statsService/FluxerStatsService';
 
 const main = async () => {
+    // Fork hook: fail startup on bad add-on settings, before anything runs.
+    const addonConfig = requireAddonConfig(process.env);
+
     await initDatabase();
 
     logger.debug(
@@ -211,6 +215,7 @@ const main = async () => {
             discordStatsService,
             fluxerStatsService,
             dbStatsService,
+            extraIntents: addonDiscordIntents(addonConfig),
         }),
         connectFluxer(),
     ]);
@@ -220,6 +225,10 @@ const main = async () => {
     }, 30_000);
 
     logger.info('Both Discord and Fluxer clients have started successfully.');
+
+    // Fork hook: add-ons start after both clients and stop on shutdown.
+    const addons = await startAddons(addonConfig, logger);
+    if (addons) registerAddonShutdown(addons);
 
     if (ENABLE_WEB_DASHBOARD) {
         const webApp = createWebApp({
@@ -235,6 +244,18 @@ const main = async () => {
             logger.info(`Web dashboard listening on port ${WEB_PORT}`);
         });
     }
+};
+
+const registerAddonShutdown = (addons: { stop(): Promise<void> }) => {
+    const shutdown = (signal: NodeJS.Signals) => {
+        logger.info(`${signal} received, stopping add-ons`);
+        addons
+            .stop()
+            .catch((err) => logger.error('Add-on shutdown error:', err))
+            .finally(() => process.exit(0));
+    };
+    process.once('SIGTERM', shutdown);
+    process.once('SIGINT', shutdown);
 };
 
 main().catch((err) => {

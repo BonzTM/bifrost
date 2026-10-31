@@ -1,0 +1,107 @@
+import type { AddonConfig } from './config';
+import type { AddonLogger, IsolationBoundary } from './isolation';
+import type { AddonModeController } from './mode';
+
+/** What every add-on receives at start. */
+export interface AddonContext {
+    readonly mode: AddonModeController;
+    readonly boundary: IsolationBoundary;
+    readonly logger: AddonLogger;
+}
+
+/** One add-on module: guild-sync, history or identity. */
+export interface Addon {
+    readonly name: string;
+    start(context: AddonContext): Promise<void>;
+    stop(): Promise<void>;
+}
+
+export type AddonKey = 'guildSync' | 'history' | 'identity';
+export type AddonFactories = Partial<Record<AddonKey, () => Addon>>;
+
+const ADDON_KEYS: readonly AddonKey[] = ['guildSync', 'history', 'identity'];
+const MAX_ADDONS = ADDON_KEYS.length;
+export const DEFAULT_STOP_TIMEOUT_MS = 10_000;
+
+/**
+ * Picks the add-ons to run from the config. An add-on that is switched on
+ * but has no implementation yet is reported in `missing`.
+ */
+export function selectAddons(
+    config: AddonConfig,
+    factories: AddonFactories
+): { addons: Addon[]; missing: AddonKey[] } {
+    const addons: Addon[] = [];
+    const missing: AddonKey[] = [];
+    for (const key of ADDON_KEYS) {
+        if (!config[key]) continue;
+        const factory = factories[key];
+        if (factory) addons.push(factory());
+        else missing.push(key);
+    }
+    return { addons, missing };
+}
+
+function withTimeout<T>(
+    promise: Promise<T>,
+    timeoutMs: number,
+    label: string
+): Promise<T> {
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+            () => reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
+            timeoutMs
+        );
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+/** Starts and stops add-ons, each inside the isolation boundary. */
+export class AddonHost {
+    private readonly started: Addon[] = [];
+
+    constructor(
+        private readonly addons: readonly Addon[],
+        private readonly context: AddonContext,
+        private readonly stopTimeoutMs = DEFAULT_STOP_TIMEOUT_MS
+    ) {
+        if (addons.length > MAX_ADDONS) {
+            throw new Error(
+                `At most ${MAX_ADDONS} add-ons are supported, got ${addons.length}`
+            );
+        }
+        const names = new Set(addons.map((addon) => addon.name));
+        if (names.size !== addons.length) {
+            throw new Error('Add-on names must be unique');
+        }
+        if (stopTimeoutMs <= 0) {
+            throw new Error('stopTimeoutMs must be positive');
+        }
+    }
+
+    /** Starts each add-on. A failed start never stops the others. */
+    async startAll(): Promise<{ started: string[]; failed: string[] }> {
+        const failed: string[] = [];
+        for (const addon of this.addons) {
+            const result = await this.context.boundary.run(
+                addon.name,
+                'start',
+                () => addon.start(this.context)
+            );
+            if (result.ok) this.started.push(addon);
+            else failed.push(addon.name);
+        }
+        return { started: this.started.map((addon) => addon.name), failed };
+    }
+
+    /** Stops started add-ons in reverse order, each with a time limit. */
+    async stopAll(): Promise<void> {
+        const toStop = this.started.splice(0).reverse();
+        for (const addon of toStop) {
+            await this.context.boundary.run(addon.name, 'stop', () =>
+                withTimeout(addon.stop(), this.stopTimeoutMs, addon.name)
+            );
+        }
+    }
+}

@@ -11,7 +11,7 @@ jobs:
 
     strategy:
       matrix:
-        task: [lint, format:check, build]
+        task: [lint, format:check, build, typecheck:test, test]
 
     steps:
       - uses: actions/checkout@v4
