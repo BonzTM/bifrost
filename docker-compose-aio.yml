@@ -1,6 +1,6 @@
 services:
     bifrost:
-        image: kartoffelchipss/bifrost:latest
+        image: ghcr.io/bonztm/bifrost:latest
         container_name: bifrost
         restart: unless-stopped
         depends_on:
@@ -10,13 +10,15 @@ services:
         #    - '9092:9092'
         env_file:
             - .env
+        # BF_DB_* names are what src/utils/env.ts reads. These override the
+        # same keys in .env, so this stack always runs on the Postgres below.
         environment:
-            DB_DIALECT: postgres
-            DB_HOST: postgres
-            DB_PORT: 5432
-            DB_NAME: bifrost
-            DB_USER: bifrost_user
-            DB_PASS: ${POSTGRES_PASSWORD}
+            BF_DB_DIALECT: postgres
+            BF_DB_HOST: postgres
+            BF_DB_PORT: 5432
+            BF_DB_NAME: bifrost
+            BF_DB_USER: bifrost_user
+            BF_DB_PASS: ${POSTGRES_PASSWORD}
         volumes:
             - ./config:/config
         networks:
