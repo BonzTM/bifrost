@@ -83,12 +83,22 @@ describe('parseAddonConfig database dialect', () => {
         assert.equal(result.ok, true);
     });
 
-    it('accepts Postgres in any case', () => {
+    it('accepts the exact value postgres', () => {
         const result = parseAddonConfig({
             BF_ADDONS_ENABLED: 'true',
-            BF_DB_DIALECT: 'Postgres',
+            BF_DB_DIALECT: 'postgres',
         });
         assert.equal(result.ok, true);
+    });
+
+    it('refuses values upstream would not read as Postgres', () => {
+        for (const value of ['Postgres', ' postgres', 'postgresql']) {
+            const result = parseAddonConfig({
+                BF_ADDONS_ENABLED: 'true',
+                BF_DB_DIALECT: value,
+            });
+            assert.equal(result.ok, false, value);
+        }
     });
 });
 

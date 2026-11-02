@@ -17,6 +17,7 @@ export const TABLES = {
 
 /** Umzug's record of applied add-on migrations, apart from upstream's. */
 export const MIGRATIONS_TABLE = 'addon_migrations';
+export const MIGRATIONS_MODEL = 'AddonMigrationMeta';
 
 export const OBJECT_KINDS = [
     'guild',

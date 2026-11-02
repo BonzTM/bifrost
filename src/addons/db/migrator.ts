@@ -3,7 +3,7 @@ import { SequelizeStorage, Umzug, type RunnableMigration } from 'umzug';
 import type { AddonConfig } from '../config';
 import type { AddonLogger } from '../isolation';
 import * as baseline from './migrations/00001-addon-baseline';
-import { MIGRATIONS_TABLE } from './schema';
+import { MIGRATIONS_MODEL, MIGRATIONS_TABLE } from './schema';
 
 /**
  * Add-on migrations, listed explicitly in order. Upstream's migrations stay
@@ -25,8 +25,12 @@ export function createAddonUmzug(sequelize: Sequelize) {
     return new Umzug({
         migrations: MIGRATIONS,
         context: sequelize.getQueryInterface(),
+        // Umzug reuses any model already registered under modelName, and
+        // upstream registers the default 'SequelizeMeta' first. A distinct
+        // name keeps add-on records out of upstream's table.
         storage: new SequelizeStorage({
             sequelize,
+            modelName: MIGRATIONS_MODEL,
             tableName: MIGRATIONS_TABLE,
         }),
         logger: undefined,

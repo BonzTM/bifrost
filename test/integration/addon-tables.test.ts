@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { after, before, describe, it } from 'node:test';
 import { DataTypes, Sequelize } from 'sequelize';
+import { SequelizeStorage } from 'umzug';
 import {
     createAddonUmzug,
     runAddonMigrations,
@@ -30,6 +31,9 @@ describe('add-on tables on Postgres', { skip: !url }, () => {
             fluxerGuildId: { type: DataTypes.STRING },
             createdAt: { type: DataTypes.DATE, allowNull: false },
         });
+        // Upstream's migrator registers its storage model on the same
+        // instance at startup (src/db/migrator.ts). Mirror that here.
+        await new SequelizeStorage({ sequelize: db }).executed();
         guildLinkId = randomUUID();
         await db.query(
             `INSERT INTO guild_links (id, "discordGuildId", "fluxerGuildId", "createdAt") VALUES ($1, 'd', 'f', now())`,
@@ -49,6 +53,15 @@ describe('add-on tables on Postgres', { skip: !url }, () => {
         for (const table of Object.values(TABLES)) {
             assert.ok(tables.includes(table), `${table} exists`);
         }
+    });
+
+    it('records add-on migrations apart from upstream', async () => {
+        const [addon] = await db.query(
+            'SELECT name FROM addon_migrations ORDER BY name'
+        );
+        const [upstream] = await db.query('SELECT name FROM "SequelizeMeta"');
+        assert.deepEqual(addon, [{ name: '00001-addon-baseline' }]);
+        assert.deepEqual(upstream, []);
     });
 
     it('fills settings defaults from the design', async () => {
@@ -125,4 +138,37 @@ describe('add-on tables on Postgres', { skip: !url }, () => {
             { bind: [randomUUID(), guildLinkId, kind, discordId, fluxerId] }
         );
     }
+});
+
+describe('add-on baseline after a failure', { skip: !url }, () => {
+    let db: Sequelize;
+
+    before(async () => {
+        db = new Sequelize(url ?? '', { logging: false });
+        await db.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
+        await db.getQueryInterface().createTable('guild_links', {
+            id: { type: DataTypes.UUID, primaryKey: true },
+            createdAt: { type: DataTypes.DATE, allowNull: false },
+        });
+        // A table in the way of the last create makes the baseline fail late.
+        await db.query(`CREATE TABLE ${TABLES.leaderLock} (x int)`);
+    });
+
+    after(() => db.close());
+
+    it('rolls back every table and records nothing', async () => {
+        await assert.rejects(runAddonMigrations(db, createRecordingLogger()));
+        const tables = await db.getQueryInterface().showAllTables();
+        assert.ok(!tables.includes(TABLES.objectMap));
+        const [applied] = await db.query('SELECT name FROM addon_migrations');
+        assert.deepEqual(applied, []);
+    });
+
+    it('applies cleanly on the next start', async () => {
+        await db.query(`DROP TABLE ${TABLES.leaderLock}`);
+        assert.deepEqual(
+            await runAddonMigrations(db, createRecordingLogger()),
+            ['00001-addon-baseline']
+        );
+    });
 });
