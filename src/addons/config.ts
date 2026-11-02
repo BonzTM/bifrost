@@ -88,6 +88,17 @@ export function parseAddonConfig(env: Env): AddonConfigResult {
     const mode = parseMode(env.BF_ADDONS_MODE);
     if (!mode.ok) return { ok: false, error: mode.error };
 
+    // Read exactly as upstream does (src/utils/env.ts, src/db/sequelize.ts):
+    // only the literal 'postgres' selects Postgres. The add-on tables use
+    // JSONB and an advisory lock, so add-ons refuse to start without it.
+    const dialect = env.BF_DB_DIALECT || 'sqlite';
+    if (flags.enabled && dialect !== 'postgres') {
+        return {
+            ok: false,
+            error: `BF_ADDONS_ENABLED needs BF_DB_DIALECT=postgres, got ${dialect}`,
+        };
+    }
+
     return {
         ok: true,
         config: {

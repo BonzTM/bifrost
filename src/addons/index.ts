@@ -5,6 +5,7 @@ import { AddonModeController } from './mode';
 
 export { requireAddonConfig } from './config';
 export { addonDiscordIntents } from './intents';
+export { initAddonDatabase } from './db/migrator';
 
 export interface AddonsHandle {
     stop(): Promise<void>;
