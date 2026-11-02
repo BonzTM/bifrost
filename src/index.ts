@@ -35,7 +35,13 @@ import {
     generateFluxerBotInviteLink,
 } from './utils/generateBotInvite';
 import logger from './utils/logging/logger';
-import { addonDiscordIntents, requireAddonConfig, startAddons } from './addons';
+import {
+    addonDiscordIntents,
+    initAddonDatabase,
+    requireAddonConfig,
+    startAddons,
+} from './addons';
+import sequelize from './db/sequelize';
 import DiscordStatsService from './services/statsService/DiscordStatsService';
 import FluxerStatsService from './services/statsService/FluxerStatsService';
 
@@ -44,6 +50,8 @@ const main = async () => {
     const addonConfig = requireAddonConfig(process.env);
 
     await initDatabase();
+    // Fork hook: add-on tables, only when add-ons are on.
+    await initAddonDatabase(addonConfig, sequelize, logger);
 
     logger.debug(
         `GIT_COMMIT: ${GIT_COMMIT ?? 'not resolved — stats will show N/A'}`

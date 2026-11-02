@@ -88,6 +88,16 @@ export function parseAddonConfig(env: Env): AddonConfigResult {
     const mode = parseMode(env.BF_ADDONS_MODE);
     if (!mode.ok) return { ok: false, error: mode.error };
 
+    // Upstream defaults to SQLite (src/utils/env.ts). The add-on tables use
+    // JSONB and an advisory lock, so add-ons refuse to start without Postgres.
+    const dialect = (env.BF_DB_DIALECT ?? '').trim().toLowerCase() || 'sqlite';
+    if (flags.enabled && dialect !== 'postgres') {
+        return {
+            ok: false,
+            error: `BF_ADDONS_ENABLED needs BF_DB_DIALECT=postgres, got ${dialect}`,
+        };
+    }
+
     return {
         ok: true,
         config: {

@@ -22,3 +22,32 @@ jobs:
       - run: npm install -g pnpm
       - run: pnpm install
       - run: pnpm run ${{ matrix.task }}
+  integration:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: bifrost_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d bifrost_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      BF_TEST_POSTGRES_URL: postgres://postgres:test@localhost:5432/bifrost_test
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - run: npm install -g pnpm
+      - run: pnpm install
+      - run: pnpm run test:integration

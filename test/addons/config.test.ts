@@ -33,6 +33,7 @@ describe('parseAddonConfig', () => {
     it('turns on only the add-ons that are switched on', () => {
         const result = parseAddonConfig({
             BF_ADDONS_ENABLED: 'yes',
+            BF_DB_DIALECT: 'postgres',
             BF_ADDON_GUILD_SYNC: '1',
             BF_ADDON_HISTORY: 'false',
             BF_ADDONS_MODE: 'read-only',
@@ -59,6 +60,35 @@ describe('parseAddonConfig', () => {
     it('rejects an unknown mode', () => {
         const result = parseAddonConfig({ BF_ADDONS_MODE: 'yolo' });
         assert.equal(result.ok, false);
+    });
+});
+
+describe('parseAddonConfig database dialect', () => {
+    it('refuses add-ons on the SQLite default', () => {
+        const result = parseAddonConfig({ BF_ADDONS_ENABLED: 'true' });
+        assert.equal(result.ok, false);
+        assert.match(!result.ok ? result.error : '', /BF_DB_DIALECT=postgres/);
+    });
+
+    it('refuses add-ons on an explicit SQLite dialect', () => {
+        const result = parseAddonConfig({
+            BF_ADDONS_ENABLED: 'true',
+            BF_DB_DIALECT: 'sqlite',
+        });
+        assert.equal(result.ok, false);
+    });
+
+    it('allows SQLite while add-ons are off', () => {
+        const result = parseAddonConfig({ BF_DB_DIALECT: 'sqlite' });
+        assert.equal(result.ok, true);
+    });
+
+    it('accepts Postgres in any case', () => {
+        const result = parseAddonConfig({
+            BF_ADDONS_ENABLED: 'true',
+            BF_DB_DIALECT: 'Postgres',
+        });
+        assert.equal(result.ok, true);
     });
 });
 
