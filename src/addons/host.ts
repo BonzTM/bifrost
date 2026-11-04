@@ -42,7 +42,15 @@ export function selectAddons(
     return { addons, missing };
 }
 
-function withTimeout<T>(
+export class AddonTimeoutError extends Error {
+    constructor(label: string, timeoutMs: number) {
+        super(`${label} timed out after ${timeoutMs}ms`);
+        this.name = 'AddonTimeoutError';
+    }
+}
+
+/** Rejects with {@link AddonTimeoutError} when `promise` takes too long. */
+export function withTimeout<T>(
     promise: Promise<T>,
     timeoutMs: number,
     label: string
@@ -50,7 +58,7 @@ function withTimeout<T>(
     let timer: NodeJS.Timeout | undefined;
     const timeout = new Promise<never>((_, reject) => {
         timer = setTimeout(
-            () => reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
+            () => reject(new AddonTimeoutError(label, timeoutMs)),
             timeoutMs
         );
     });
