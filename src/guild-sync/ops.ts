@@ -1,0 +1,102 @@
+import type {
+    ObjectKind,
+    ObjectState,
+    SyncDirection,
+} from '../addons/db/schema';
+
+/** Object kinds a plan can act on. Overwrites ride on channel updates. */
+export type SyncKind = Exclude<ObjectKind, 'overwrite'>;
+
+export type JsonValue =
+    | string
+    | number
+    | boolean
+    | null
+    | readonly JsonValue[]
+    | { readonly [key: string]: JsonValue };
+
+export interface FieldChange {
+    readonly field: string;
+    readonly from: JsonValue;
+    readonly to: JsonValue;
+}
+
+export type PlanOp =
+    | {
+          readonly op: 'create';
+          readonly kind: SyncKind;
+          readonly sourceId: string;
+          readonly name: string;
+          /** An unmapped destination object with the same name and type. */
+          readonly existingDestId: string | null;
+      }
+    | {
+          readonly op: 'update';
+          readonly kind: SyncKind;
+          readonly sourceId: string;
+          readonly destId: string;
+          readonly changes: readonly FieldChange[];
+      }
+    | {
+          readonly op: 'reorder';
+          readonly kind: 'role' | 'channel';
+          /** 'roles', 'top' or the destination category ID. */
+          readonly scope: string;
+          readonly destIds: readonly string[];
+      }
+    | {
+          readonly op: 'archive';
+          readonly kind: SyncKind;
+          readonly sourceId: string;
+          readonly destId: string;
+      }
+    | {
+          readonly op: 'hard-delete';
+          readonly kind: SyncKind;
+          readonly sourceId: string;
+          readonly destId: string;
+          /** Adopted at bootstrap, not created by sync. Needs approval. */
+          readonly adopted: boolean;
+      };
+
+export type FindingType =
+    | 'drift'
+    | 'skipped'
+    | 'missing-on-destination'
+    | 'category-full'
+    | 'permission-dropped'
+    | 'not-held-by-bot'
+    | 'dropped-by-ownership'
+    | 'removal-deferred';
+
+/** Something the plan reports but does not act on. */
+export interface Finding {
+    readonly type: FindingType;
+    readonly kind: SyncKind;
+    readonly id: string;
+    readonly detail: string;
+}
+
+/** One `addon_object_map` row, as the diff and guards read it. */
+export interface MapRow {
+    readonly id: string;
+    readonly kind: ObjectKind;
+    readonly discordId: string | null;
+    readonly fluxerId: string | null;
+    readonly state: ObjectState;
+    readonly createdBySync: boolean;
+    readonly missingSince: Date | null;
+    readonly missingCount: number;
+}
+
+export function sourceIdOf(row: MapRow, direction: SyncDirection) {
+    return direction === 'discord-to-fluxer' ? row.discordId : row.fluxerId;
+}
+
+export function destIdOf(row: MapRow, direction: SyncDirection) {
+    return direction === 'discord-to-fluxer' ? row.fluxerId : row.discordId;
+}
+
+export function isRemoval(op: PlanOp): boolean {
+    return op.op === 'archive' || op.op === 'hard-delete';
+}

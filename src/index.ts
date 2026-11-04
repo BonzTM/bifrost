@@ -37,6 +37,7 @@ import {
 import logger from './utils/logging/logger';
 import {
     addonDiscordIntents,
+    addonFactories,
     initAddonDatabase,
     requireAddonConfig,
     startAddons,
@@ -235,7 +236,16 @@ const main = async () => {
     logger.info('Both Discord and Fluxer clients have started successfully.');
 
     // Fork hook: add-ons start after both clients and stop on shutdown.
-    const addons = await startAddons(addonConfig, logger);
+    const addons = await startAddons(
+        addonConfig,
+        logger,
+        addonFactories({
+            discordClient,
+            fluxerClientRef,
+            listGuildLinks: () => linkService.getAllGuildLinks(),
+            sequelize,
+        })
+    );
     if (addons) registerAddonShutdown(addons);
 
     if (ENABLE_WEB_DASHBOARD) {

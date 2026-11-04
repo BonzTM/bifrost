@@ -2,6 +2,7 @@ import type { AddonConfig } from './config';
 import { AddonHost, selectAddons, type AddonFactories } from './host';
 import { IsolationBoundary, type AddonLogger } from './isolation';
 import { AddonModeController } from './mode';
+import { createGuildSyncAddon, type GuildSyncDeps } from '../guild-sync';
 
 export { requireAddonConfig } from './config';
 export { addonDiscordIntents } from './intents';
@@ -11,8 +12,13 @@ export interface AddonsHandle {
     stop(): Promise<void>;
 }
 
+/** What the add-ons need from Bifröst. Built once in src/index.ts. */
+export type AddonDeps = GuildSyncDeps;
+
 /** Add-on implementations. Each add-on registers here when it lands. */
-const FACTORIES: AddonFactories = {};
+export function addonFactories(deps: AddonDeps): AddonFactories {
+    return { guildSync: () => createGuildSyncAddon(deps) };
+}
 
 /**
  * Starts the enabled add-ons. Returns null when add-ons are off, so the
@@ -21,7 +27,7 @@ const FACTORIES: AddonFactories = {};
 export async function startAddons(
     config: AddonConfig,
     logger: AddonLogger,
-    factories: AddonFactories = FACTORIES
+    factories: AddonFactories
 ): Promise<AddonsHandle | null> {
     if (!config.enabled) {
         logger.info('[addons] Add-ons are disabled');
