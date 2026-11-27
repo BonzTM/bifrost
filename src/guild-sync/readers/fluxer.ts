@@ -1,11 +1,12 @@
-import type {
-    Client,
-    Guild,
-    GuildChannel,
-    GuildEmoji,
-    GuildSticker,
-    Role,
-    ThreadChannel,
+import {
+    Routes,
+    type Client,
+    type Guild,
+    type GuildChannel,
+    type GuildEmoji,
+    type GuildSticker,
+    type Role,
+    type ThreadChannel,
 } from '@fluxerjs/core';
 import type { ReadResult } from '../health';
 import { isNotFound } from '../notFound';
@@ -97,11 +98,46 @@ function threadDefaults(type: number, extra: OptionalChannelFields) {
     if (!THREAD_PARENT_TYPES.has(type)) return {};
     return {
         defaultAutoArchive: extra.defaultAutoArchiveDuration ?? null,
-        defaultThreadSlowmode: extra.defaultThreadRateLimitPerUser ?? null,
+        // No default slowmode is 0 on both platforms (Discord sends null).
+        defaultThreadSlowmode: extra.defaultThreadRateLimitPerUser ?? 0,
     };
 }
 
-export function fluxerChannel(c: GuildChannel): ChannelSnap {
+/** Raw channel fields the library does not keep. */
+export type RawChannelFields = ReadonlyMap<string, { topic: string | null }>;
+
+/**
+ * Forum and media topics, read from the raw channel list. @fluxerjs/core's
+ * ThreadOnlyChannel class has no `topic` field (only TextChannel parses
+ * it), so without this every forum looks edited on Fluxer.
+ */
+export async function rawChannelFields(
+    guild: Guild
+): Promise<RawChannelFields> {
+    const rest = (guild.client as Partial<Client> | undefined)?.rest;
+    if (!rest) return new Map();
+    // A failed read only leaves forum topics unknown: they show as drift,
+    // which is reported and never written.
+    const raw = (await rest
+        .get(Routes.guildChannels(guild.id))
+        .catch(() => [])) as readonly {
+        id?: unknown;
+        type?: unknown;
+        topic?: unknown;
+    }[];
+    const out = new Map<string, { topic: string | null }>();
+    for (const c of Array.isArray(raw) ? raw : []) {
+        if (typeof c.id !== 'string' || !THREAD_ONLY_TYPES.has(Number(c.type)))
+            continue;
+        out.set(c.id, { topic: typeof c.topic === 'string' ? c.topic : null });
+    }
+    return out;
+}
+
+export function fluxerChannel(
+    c: GuildChannel,
+    raw: RawChannelFields = new Map()
+): ChannelSnap {
     const extra = c as GuildChannel & OptionalChannelFields;
     const overwrites: OverwriteSnap[] = [];
     for (const o of c.permissionOverwrites) {
@@ -118,7 +154,7 @@ export function fluxerChannel(c: GuildChannel): ChannelSnap {
         name: c.name ?? '',
         position: c.position ?? 0,
         parentId: c.parentId,
-        topic: extra.topic ?? null,
+        topic: extra.topic ?? raw.get(c.id)?.topic ?? null,
         nsfw: extra.nsfw ?? false,
         rateLimitPerUser: extra.rateLimitPerUser ?? 0,
         bitrate: extra.bitrate ?? null,
@@ -283,12 +319,13 @@ const fluxerSticker = (s: GuildSticker): StickerSnap => ({
 });
 
 async function snapshotOf(guild: Guild): Promise<GuildSnapshot> {
-    const [channels, roles, emojis, stickers, me] = await Promise.all([
+    const [channels, roles, emojis, stickers, me, raw] = await Promise.all([
         guild.fetchChannels(),
         guild.fetchRoles(),
         guild.fetchEmojis(),
         guild.fetchStickers(),
         guild.fetchMe(),
+        rawChannelFields(guild),
     ]);
     const { threads, gaps, privateGaps } = await readThreads(guild, channels);
     return {
@@ -299,7 +336,7 @@ async function snapshotOf(guild: Guild): Promise<GuildSnapshot> {
         banner: guild.banner,
         everyoneRoleId: guild.id,
         roles: roles.map(fluxerRole),
-        channels: channels.map(fluxerChannel),
+        channels: channels.map((c) => fluxerChannel(c, raw)),
         emojis: emojis.map(fluxerEmoji),
         stickers: stickers.map(fluxerSticker),
         threads,

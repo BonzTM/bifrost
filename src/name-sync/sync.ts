@@ -25,7 +25,7 @@ export interface NameSyncPorts {
 export interface NameSyncDeps {
     readonly store: Pick<
         PostgresNameStore,
-        'due' | 'applied' | 'failed' | 'isOptedOut' | 'copies'
+        'due' | 'applied' | 'failed' | 'isOptedOut' | 'copies' | 'archivedNames'
     >;
     readonly writer: Pick<FluxerNameWriter, 'rename'>;
     readonly ports: NameSyncPorts;
@@ -87,7 +87,10 @@ export class NameSync {
             await store.applied(guildId, userId, null, this.deps.now());
             return;
         }
-        const names = await ports.names(guildId, userId);
+        // A deleted Discord account keeps the name the archive last saw.
+        const names =
+            (await ports.names(guildId, userId)) ??
+            (await store.archivedNames(guildId, userId));
         if (!names) throw new Error('Discord has no such user');
         const name = copyName(names);
         const copies = await store.copies(link.id, userId);

@@ -99,7 +99,8 @@ function threadDefaults(
     if (!('defaultThreadRateLimitPerUser' in c)) return {};
     return {
         defaultAutoArchive: c.defaultAutoArchiveDuration ?? null,
-        defaultThreadSlowmode: c.defaultThreadRateLimitPerUser ?? null,
+        // Discord sends null for no default slowmode; Fluxer sends 0.
+        defaultThreadSlowmode: c.defaultThreadRateLimitPerUser ?? 0,
     };
 }
 

@@ -8,7 +8,10 @@ import {
     MAX_ARCHIVE_PAGES,
     discordChannel,
 } from '../../src/guild-sync/readers/discord';
-import { FluxerGuildReader } from '../../src/guild-sync/readers/fluxer';
+import {
+    FluxerGuildReader,
+    fluxerChannel,
+} from '../../src/guild-sync/readers/fluxer';
 
 /** A private thread as either library returns it. */
 function thread(id: string) {
@@ -254,5 +257,46 @@ describe('Fluxer gone check', () => {
             }),
         });
         assert.equal(await reader.isGone('g1', 'thread', 't1'), null);
+    });
+});
+
+describe('forum fields the readers must not misread', () => {
+    const forum = (fields: Record<string, unknown>) =>
+        ({
+            id: 'f1',
+            type: 15,
+            name: 'game-chat',
+            rawPosition: 0,
+            position: 0,
+            parentId: null,
+            nsfw: false,
+            rateLimitPerUser: 0,
+            permissionOverwrites: { cache: { map: () => [] } },
+            availableTags: [],
+            defaultReactionEmoji: null,
+            defaultSortOrder: null,
+            defaultAutoArchiveDuration: 4320,
+            ...fields,
+        }) as unknown;
+
+    it('reads a Discord forum with no default slowmode as 0, as Fluxer sends it', () => {
+        const snap = discordChannel(
+            forum({
+                topic: 'rules',
+                defaultThreadRateLimitPerUser: null,
+            }) as NonThreadGuildBasedChannel
+        );
+        assert.equal(snap.defaultThreadSlowmode, 0);
+    });
+
+    it('takes a Fluxer forum topic from the raw channel list', () => {
+        // @fluxerjs/core's ThreadOnlyChannel has no topic field.
+        const channel = { ...(forum({}) as object), permissionOverwrites: [] };
+        const snap = fluxerChannel(
+            channel as unknown as Parameters<typeof fluxerChannel>[0],
+            new Map([['f1', { topic: 'rules' }]])
+        );
+        assert.equal(snap.topic, 'rules');
+        assert.equal(snap.defaultThreadSlowmode, 0);
     });
 });

@@ -127,6 +127,20 @@ describe('name sync on Postgres', { skip: !url }, () => {
         });
     });
 
+    it('finds the archived names of a member', async () => {
+        const store = new PostgresNameStore(bifrost);
+        await bifrost.query(
+            `INSERT INTO ${TABLES.archiveMembers} ("guildId", "userId", username, "globalName", nick, avatar, "serverAvatar", "inGuild", "seenAt")
+             VALUES ('100', '600', 'old', 'Old Name', null, null, null, false, now())`
+        );
+        assert.deepEqual(await store.archivedNames('100', '600'), {
+            nick: null,
+            globalName: 'Old Name',
+            username: 'old',
+        });
+        assert.equal(await store.archivedNames('100', '601'), null);
+    });
+
     it('seeds authors once, and tracks what was applied', async () => {
         const store = new PostgresNameStore(bifrost);
         await store.seed('100', GUILD_LINK);
