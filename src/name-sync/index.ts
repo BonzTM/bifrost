@@ -195,6 +195,8 @@ export function createNameSyncAddon(deps: NameSyncAddonDeps): Addon {
                         more = (await names.pass(link)) || more;
                     }
                     if (seed && links.length > 0) seededAt = Date.now();
+                    if (links.length > 0)
+                        await giveThreads(writer, deps, logger);
                     return more;
                 },
                 BUSY_DELAY_MS,
@@ -211,6 +213,23 @@ export function createNameSyncAddon(deps: NameSyncAddonDeps): Addon {
             db = null;
         },
     };
+}
+
+/** Gives webhook-owned threads to the bot; a failure waits for the next pass. */
+async function giveThreads(
+    writer: FluxerNameWriter,
+    deps: NameSyncAddonDeps,
+    logger: AddonLogger
+): Promise<void> {
+    const botId = deps.fluxerClientRef.current?.user?.id;
+    if (!botId) return;
+    try {
+        const changed = await writer.giveWebhookThreads(botId);
+        if (changed > 0)
+            logger.info(`[name-sync] ${changed} threads given to the bot`);
+    } catch (error) {
+        logger.warn(`[name-sync] Thread owners not fixed: ${describe(error)}`);
+    }
 }
 
 /** Marks authors whose Discord names change. Returns the unsubscribe. */

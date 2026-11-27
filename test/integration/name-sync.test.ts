@@ -198,4 +198,46 @@ describe('name sync on Postgres', { skip: !url }, () => {
         );
         await assert.rejects(writer.rename(copies, ''));
     });
+
+    it("gives webhook-owned threads to the bot and leaves people's threads alone", async () => {
+        const insert = (table: string, key: string, data: object) =>
+            fluxer.query(
+                `INSERT INTO fluxer_kv (table_name, partition_key, row_key, row_data) VALUES ($1, $2, $2, $3::jsonb)`,
+                { bind: [table, key, JSON.stringify(data)] }
+            );
+        await insert('webhooks', 'w7', { webhook_id: bigintValue('7') });
+        await insert('channels', 't1', {
+            channel_id: bigintValue('901'),
+            type: 11,
+            owner_id: bigintValue('7'),
+        });
+        await insert('channels', 't2', {
+            channel_id: bigintValue('902'),
+            type: 11,
+            owner_id: bigintValue('55'),
+        });
+        await insert('channels', 'c1', {
+            channel_id: bigintValue('903'),
+            type: 0,
+            owner_id: bigintValue('7'),
+        });
+        const writer = new FluxerNameWriter({
+            rows: <T extends object>(sql: string, bind: readonly unknown[]) =>
+                fluxer.query<T>(sql, {
+                    bind: [...bind],
+                    type: QueryTypes.SELECT,
+                }),
+        });
+        assert.equal(await writer.giveWebhookThreads('1565044763378319360'), 1);
+        assert.equal(await writer.giveWebhookThreads('1565044763378319360'), 0);
+        const owners = await fluxer.query<{ id: string; owner: string }>(
+            `SELECT row_data->'channel_id'->>'value' AS id, row_data->'owner_id'->>'value' AS owner
+             FROM fluxer_kv WHERE table_name = 'channels' ORDER BY 1`,
+            { type: QueryTypes.SELECT }
+        );
+        assert.deepEqual(
+            owners.map((o) => o.owner),
+            ['1565044763378319360', '55', '7']
+        );
+    });
 });
