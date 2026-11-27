@@ -1217,6 +1217,30 @@ export class PostgresGuildSyncStore
         };
     }
 
+    /**
+     * The newest `side` message ID in the thread whose pair was recorded
+     * before `before`, original or copy. A newer snowflake is never
+     * shorter, so ordering by length, then text, finds the newest.
+     */
+    async newestThreadMessage(
+        side: SnapshotSide,
+        threadId: string,
+        before: Date
+    ): Promise<string | null> {
+        const [thread, message] =
+            side === 'discord'
+                ? ['discordThreadId', 'discordMessageId']
+                : ['fluxerThreadId', 'fluxerMessageId'];
+        const rows = await this.db.query<Row>(
+            `SELECT "${message}" AS id FROM ${TABLES.threadMessages}
+             WHERE "${thread}" = $1 AND "createdAt" < $2
+             ORDER BY LENGTH("${message}") DESC, "${message}" DESC LIMIT 1`,
+            { bind: [threadId, before], type: QueryTypes.SELECT }
+        );
+        const id = rows[0]?.id;
+        return typeof id === 'string' && id !== '' ? id : null;
+    }
+
     async deleteThreadMessage(
         side: SnapshotSide,
         messageId: string

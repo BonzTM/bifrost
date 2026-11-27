@@ -217,9 +217,11 @@ export class CatchUp<D, F> {
         channelId: string,
         r: SideReport
     ) {
+        // A forum link: its posts are threads, which guild-sync's thread
+        // catch-up covers (src/guild-sync/threadCatchUp.ts).
         if (r.unavailable) {
-            this.deps.logger.warn(
-                `[catch-up] Link ${link.linkId}: ${side} channel ${channelId} is not a relayed channel; skipped`
+            this.deps.logger.info(
+                `[catch-up] Link ${link.linkId}: ${side} channel ${channelId} has no channel messages to catch up (forum or thread-only); skipped`
             );
             return;
         }

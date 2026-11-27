@@ -185,8 +185,10 @@ describe('catch-up run', () => {
         t.discord.pages.set('dc-1', null);
         await new CatchUp(t.deps).run();
         assert.ok(
-            t.logger.entries.some((e) =>
-                e.message.includes('is not a relayed channel')
+            t.logger.entries.some(
+                (e) =>
+                    e.level === 'info' &&
+                    e.message.includes('has no channel messages to catch up')
             )
         );
     });

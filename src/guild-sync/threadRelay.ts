@@ -115,7 +115,16 @@ export const MAX_PARKED_FAILURES = 3;
 /** Upper bound on sent replies remembered because their copy was not recorded. */
 export const MAX_UNRECORDED_SENDS = 1_000;
 
+/** Upper bound on live messages held while catch-up runs. */
+export const MAX_HELD_MESSAGES = 1_000;
+
 type Outcome = 'relayed' | 'unmapped' | 'ignored';
+
+interface HeldMessage {
+    readonly from: SnapshotSide;
+    readonly event: ThreadMessageEvent;
+    readonly raw: unknown;
+}
 
 const other = (side: SnapshotSide): SnapshotSide =>
     side === 'discord' ? 'fluxer' : 'discord';
@@ -136,6 +145,8 @@ export class ThreadRelay {
      * A held one among them is settled, never sent again.
      */
     private readonly sentUnrecorded = new Set<string>();
+    /** Live messages held while catch-up runs; null when not holding. */
+    private held: HeldMessage[] | null = null;
 
     constructor(private readonly deps: ThreadRelayDeps) {
         this.parked = deps.parked ?? new MemoryParkedMessages();
@@ -234,6 +245,18 @@ export class ThreadRelay {
         };
     }
 
+    /**
+     * True when a copy of the message exists. Catch-up and the live
+     * listener can both see one message; the thread's queue runs them one
+     * after the other, so the second finds the first's copy.
+     */
+    private async copied(from: SnapshotSide, messageId: string) {
+        if (this.sentUnrecorded.has(threadKey(from, messageId))) return true;
+        return (
+            (await this.deps.store.findThreadMessage(from, messageId)) !== null
+        );
+    }
+
     /** Sends a copy of a new message, or says why it must wait. */
     private async relay(
         from: SnapshotSide,
@@ -241,6 +264,7 @@ export class ThreadRelay {
         event: ThreadMessageEvent,
         raw: unknown
     ): Promise<Outcome> {
+        if (await this.copied(from, event.id)) return 'ignored';
         const { pair, starterCopied, skipped } = await this.pairFor(
             from,
             link,
@@ -324,7 +348,46 @@ export class ThreadRelay {
         });
     }
 
+    /**
+     * Holds new live messages until {@link releaseHeld}, so catch-up can
+     * copy what was missed first and order is kept. Past
+     * {@link MAX_HELD_MESSAGES}, new ones are relayed at once.
+     */
+    holdNew(): void {
+        this.held ??= [];
+    }
+
+    /** Relays the held live messages in arrival order and stops holding. */
+    async releaseHeld(): Promise<void> {
+        const held = this.held ?? [];
+        this.held = null;
+        for (const message of held) {
+            await this.createdNow(message.from, message.event, message.raw);
+        }
+    }
+
     async created(
+        from: SnapshotSide,
+        event: ThreadMessageEvent,
+        raw: unknown
+    ): Promise<void> {
+        if (this.held && this.held.length < MAX_HELD_MESSAGES) {
+            this.held.push({ from, event, raw });
+            return;
+        }
+        await this.createdNow(from, event, raw);
+    }
+
+    /** Relays a message catch-up found. Never held; a copied one is skipped. */
+    async caughtUp(
+        from: SnapshotSide,
+        event: ThreadMessageEvent,
+        raw: unknown
+    ): Promise<void> {
+        await this.createdNow(from, event, raw);
+    }
+
+    private async createdNow(
         from: SnapshotSide,
         event: ThreadMessageEvent,
         raw: unknown
