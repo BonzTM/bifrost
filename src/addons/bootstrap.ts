@@ -5,6 +5,10 @@ import { ThreadResetPort } from '../guild-sync/threadResetJob';
 import type { UpstreamServices } from '../guild-sync/upstreamBridge';
 import type { LinkService } from '../services/LinkService';
 import type { AddonCommandDeps, DiscordCommandFactory } from './commands';
+import {
+    parseCatchUpConfig,
+    type CatchUpConfig,
+} from '../relay-extras/catchUp/config';
 import { requireAddonConfig, type AddonConfig } from './config';
 import type { AddonFactories } from './host';
 import type { AddonDeps, AddonsHandle } from './index';
@@ -136,11 +140,22 @@ async function startForkAddons(
                 bridge: runtime.createBridge(services),
                 statusSignal: shared.statusSignal,
                 threadReset: shared.threadReset,
+                catchUp: threadCatchUpConfig(deps.env),
             },
             config
         )
     );
     if (addons) registerAddonShutdown(addons, logger, deps.processHooks);
+}
+
+/**
+ * BF_RELAY_CATCH_UP* for thread catch-up. Upstream's start already
+ * refused a bad value (relay-extras/catchUp/fork.ts), so one here means
+ * off.
+ */
+function threadCatchUpConfig(env: Env): CatchUpConfig | undefined {
+    const result = parseCatchUpConfig(env);
+    return result.ok ? result.config : undefined;
 }
 
 /**

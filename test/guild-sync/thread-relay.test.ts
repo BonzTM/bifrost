@@ -155,6 +155,40 @@ describe('ThreadRelay', () => {
         ]);
     });
 
+    it('sends one copy when a message arrives twice', async () => {
+        const { relay, calls } = await setup();
+        await relay.created('discord', inPost('m1'), 'hello');
+        await relay.caughtUp('discord', inPost('m1'), 'hello');
+        assert.deepEqual(calls, ['send fluxer f-post hello']);
+    });
+
+    it('holds live messages while catch-up runs, then sends them after', async () => {
+        const { relay, calls } = await setup();
+        relay.holdNew();
+        await relay.created('discord', inPost('m3'), 'live');
+        await relay.caughtUp('discord', inPost('m1'), 'missed-1');
+        await relay.caughtUp('discord', inPost('m2'), 'missed-2');
+        assert.deepEqual(calls, [
+            'send fluxer f-post missed-1',
+            'send fluxer f-post missed-2',
+        ]);
+        await relay.releaseHeld();
+        await relay.created('discord', inPost('m4'), 'after');
+        assert.deepEqual(calls.slice(2), [
+            'send fluxer f-post live',
+            'send fluxer f-post after',
+        ]);
+    });
+
+    it('sends a held live message once when catch-up also found it', async () => {
+        const { relay, calls } = await setup();
+        relay.holdNew();
+        await relay.created('discord', inPost('m1'), 'same');
+        await relay.caughtUp('discord', inPost('m1'), 'same');
+        await relay.releaseHeld();
+        assert.deepEqual(calls, ['send fluxer f-post same']);
+    });
+
     it('copies the other way from Fluxer', async () => {
         const { relay, calls } = await setup();
         const event = inPost('f1', {

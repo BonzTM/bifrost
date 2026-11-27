@@ -5,6 +5,7 @@ import type { Client as FluxerClient } from '@fluxerjs/core';
 import type { Sequelize } from 'sequelize';
 import type { Addon, AddonContext } from '../addons/host';
 import type { AddonLogger } from '../addons/isolation';
+import type { CatchUpConfig } from '../relay-extras/catchUp/config';
 import { DiscordAssetSource } from './assets';
 import {
     resolveMode,
@@ -39,6 +40,7 @@ import {
     listenToFluxerThreadSettings,
     listenToFluxerThreads,
 } from './threadEvents';
+import { startThreadCatchUp } from './threadCatchUpStart';
 import { ThreadRelay, type ThreadRelayPorts } from './threadRelay';
 import { ThreadResetRunner, type ThreadResetPort } from './threadResetJob';
 import { DiscordThreadWriter } from './writers/discord';
@@ -92,6 +94,8 @@ export interface GuildSyncDeps {
     readonly statusSignal?: StatusSignal;
     /** `sync reset-threads` reaches guild-sync's reset runner here. */
     readonly threadReset?: ThreadResetPort;
+    /** BF_RELAY_CATCH_UP*: threads catch up after a restart too. */
+    readonly catchUp?: CatchUpConfig;
 }
 
 /** Linked accounts, Discord user ID to Fluxer user ID. */
@@ -392,6 +396,20 @@ function startThreadRelay(
     const stopFluxer = followFluxerClient(deps.fluxerClientRef, (client) =>
         listenToFluxerThreads(client, relay, wrap)
     );
+    if (deps.catchUp) {
+        void startThreadCatchUp({
+            config: deps.catchUp,
+            relay,
+            store,
+            discordClient: deps.discordClient,
+            fluxerClientRef: deps.fluxerClientRef,
+            listGuildLinks: deps.listGuildLinks,
+            commandPrefix: deps.commandPrefix,
+            isolate: (pass) =>
+                context.boundary.run(ADDON_NAME, 'thread-catch-up', pass),
+            logger: context.logger,
+        });
+    }
     return {
         relay,
         stop: async () => {

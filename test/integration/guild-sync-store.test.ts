@@ -349,6 +349,38 @@ describe('PostgresGuildSyncStore', { skip: !url }, () => {
         await assert.rejects(store.saveThreadMessage(message, now));
         await store.deleteThreadMessage('discord', 'dm1');
         assert.equal(await store.findThreadMessage('discord', 'dm1'), null);
+
+        // Thread catch-up starts after the newest copy made before start.
+        const pair = {
+            ...message,
+            discordThreadId: 'd-cu',
+            fluxerThreadId: 'f-cu',
+        };
+        const before = new Date(now.getTime() - 60_000);
+        await store.saveThreadMessage(
+            { ...pair, discordMessageId: '99', fluxerMessageId: '1000' },
+            before
+        );
+        await store.saveThreadMessage(
+            { ...pair, discordMessageId: '100', fluxerMessageId: '999' },
+            before
+        );
+        await store.saveThreadMessage(
+            { ...pair, discordMessageId: '101', fluxerMessageId: '1001' },
+            now
+        );
+        assert.equal(
+            await store.newestThreadMessage('discord', 'd-cu', now),
+            '100'
+        );
+        assert.equal(
+            await store.newestThreadMessage('fluxer', 'f-cu', now),
+            '1000'
+        );
+        assert.equal(
+            await store.newestThreadMessage('discord', 'none', now),
+            null
+        );
     });
 
     it('keeps history jobs, imported messages and opt-outs', async () => {

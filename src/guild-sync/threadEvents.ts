@@ -53,6 +53,23 @@ function discordEvent(
 }
 
 /**
+ * The relay event of a new Discord thread message the relay copies, or
+ * null for one it skips: outside a thread, the bot's own, a join or pin
+ * notice, or a command. Live messages and catch-up share these rules.
+ */
+export function discordThreadMessage(
+    message: Message,
+    botUserId: string | null | undefined,
+    prefix: string
+): ThreadMessageEvent | null {
+    const event = discordEvent(message);
+    if (!event || message.author.id === botUserId) return null;
+    if (!DISCORD_USER_TYPES.has(message.type)) return null;
+    if (isCommandMessage(message.content, prefix)) return null;
+    return event;
+}
+
+/**
  * Listens on the Discord client and retries the relay's parked replies
  * meanwhile. Returns a function that stops both.
  */
@@ -63,11 +80,8 @@ export function listenToDiscordThreads(
     prefix: string = upstreamCommandPrefix()
 ): () => void {
     const onCreate = wrap('thread-message', async (message: Message) => {
-        const event = discordEvent(message);
-        if (!event || message.author.id === client.user?.id) return;
-        if (!DISCORD_USER_TYPES.has(message.type)) return;
-        if (isCommandMessage(message.content, prefix)) return;
-        await relay.created('discord', event, message);
+        const event = discordThreadMessage(message, client.user?.id, prefix);
+        if (event) await relay.created('discord', event, message);
     });
     const onUpdate = wrap(
         'thread-edit',
@@ -109,7 +123,7 @@ export function listenToDiscordThreads(
     };
 }
 
-interface FluxerMessageLike {
+export interface FluxerMessageLike {
     readonly id: string;
     readonly channelId: string;
     readonly channel: unknown;
@@ -132,6 +146,33 @@ function fluxerEvent(message: FluxerMessageLike): ThreadMessageEvent | null {
     };
 }
 
+/**
+ * True for a Fluxer message the thread relay copies: not the bot's own,
+ * written by a person (not a join or pin notice), and not a command.
+ */
+export function isFluxerUserMessage(
+    message: Omit<FluxerMessageLike, 'channel' | 'channelId'>,
+    botUserId: string | null | undefined,
+    prefix: string
+): boolean {
+    if (message.author?.id === botUserId) return false;
+    const type = Number(message.type ?? FLUXER_DEFAULT_TYPE);
+    if (type !== FLUXER_DEFAULT_TYPE && type !== FLUXER_REPLY_TYPE)
+        return false;
+    return !isCommandMessage(message.content, prefix);
+}
+
+/** {@link discordThreadMessage}, for Fluxer. */
+export function fluxerThreadMessage(
+    message: FluxerMessageLike,
+    botUserId: string | null | undefined,
+    prefix: string
+): ThreadMessageEvent | null {
+    const event = fluxerEvent(message);
+    if (!event || !isFluxerUserMessage(message, botUserId, prefix)) return null;
+    return event;
+}
+
 /** Listens on one Fluxer client. Returns a function that stops it. */
 export function listenToFluxerThreads(
     client: FluxerClient,
@@ -142,13 +183,8 @@ export function listenToFluxerThreads(
     const onCreate = wrap(
         'thread-message',
         async (message: FluxerMessageLike) => {
-            const event = fluxerEvent(message);
-            if (!event || message.author?.id === client.user?.id) return;
-            const type = Number(message.type ?? FLUXER_DEFAULT_TYPE);
-            if (type !== FLUXER_DEFAULT_TYPE && type !== FLUXER_REPLY_TYPE)
-                return;
-            if (isCommandMessage(message.content, prefix)) return;
-            await relay.created('fluxer', event, message);
+            const event = fluxerThreadMessage(message, client.user?.id, prefix);
+            if (event) await relay.created('fluxer', event, message);
         }
     );
     const onUpdate = wrap(
