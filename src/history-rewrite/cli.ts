@@ -4,6 +4,8 @@
  *   node dist/history-rewrite/cli.js            # dry run: plans, writes nothing
  *   node dist/history-rewrite/cli.js --apply    # writes; bifrost and Fluxer must be stopped
  *   node dist/history-rewrite/cli.js --buckets  # lowers created_bucket again, before a search rebuild
+ *   node dist/history-rewrite/cli.js --threads [--apply]  # moves guild-sync threads to their Discord IDs
+ *   node dist/history-rewrite/cli.js --thread-files      # prints the file copies the thread move needs, as JSON lines
  *
  * Bifrost's database: BF_DB_HOST, BF_DB_PORT, BF_DB_NAME, BF_DB_USER and
  * BF_DB_PASS (or BF_DB_PASS_FILE). Fluxer's database: BF_FLUXER_DB_HOST,
@@ -17,6 +19,7 @@ import { bucketOf, snowflake } from '../fluxer-db/keys';
 import { lowerCreatedBucket } from './channelState';
 import { RewriteJob, type FluxerSide } from './job';
 import { BifrostSource, otherSessions } from './sources';
+import { BifrostThreads, ThreadJob, threadFluxer } from './threadJob';
 
 const STATEMENT_TIMEOUT_MS = 300_000;
 const KEYS_PER_READ = 5_000;
@@ -107,8 +110,88 @@ async function lowerBuckets(bifrostDb: Sequelize, fluxerDb: Sequelize) {
     console.log(JSON.stringify({ mode: 'buckets', channels: oldest.size }));
 }
 
+/** The thread move, its dry run, or the list of files it needs copied. */
+async function threads(apply: boolean, filesOnly: boolean): Promise<void> {
+    const botUserId = env('BF_FLUXER_APP_ID');
+    snowflake(botUserId);
+    const bifrostDb = connect('BF_DB', 'bifrost-history-rewrite');
+    const fluxerDb = connect('BF_FLUXER_DB', 'bifrost-history-rewrite');
+    try {
+        if (apply) await requireStopped(bifrostDb, fluxerDb);
+        const job = new ThreadJob({
+            bifrost: new BifrostThreads(bifrostDb),
+            fluxer: threadFluxer(fluxerDb, (t) => ({
+                rows: <T extends object>(
+                    sql: string,
+                    bind: readonly unknown[]
+                ) =>
+                    fluxerDb.query<T>(sql, {
+                        bind: [...bind],
+                        type: QueryTypes.SELECT,
+                        transaction: t,
+                    }),
+                run: async (sql: string, bind: readonly unknown[]) => {
+                    await fluxerDb.query(sql, {
+                        bind: [...bind],
+                        transaction: t,
+                    });
+                },
+            })),
+            botUserId,
+            apply: apply && !filesOnly,
+            log: (line) => {
+                if (!filesOnly) console.log(line);
+            },
+            now: () => new Date(),
+        });
+        const report = await job.run();
+        if (filesOnly) {
+            for (const move of job.fileMoves) console.log(JSON.stringify(move));
+            return;
+        }
+        const { oldThreadIds, ...counts } = report;
+        console.log(
+            JSON.stringify(
+                {
+                    mode: apply ? 'threads-apply' : 'threads-dry-run',
+                    ...counts,
+                    movedThreadIds: oldThreadIds.length,
+                },
+                null,
+                2
+            )
+        );
+        if (apply) console.error(`OLD_THREAD_IDS ${oldThreadIds.join(',')}`);
+    } finally {
+        await bifrostDb.close();
+        await fluxerDb.close();
+    }
+}
+
+async function requireStopped(
+    bifrostDb: Sequelize,
+    fluxerDb: Sequelize
+): Promise<void> {
+    const busy = [
+        ...(await otherSessions(bifrostDb)).map((a) => `bifrost:${a}`),
+        ...(await otherSessions(fluxerDb)).map((a) => `fluxer:${a}`),
+    ];
+    if (busy.length > 0) {
+        throw new Error(
+            `Stop bifrost and Fluxer first. Open sessions: ${busy.join(', ')}`
+        );
+    }
+}
+
 async function main(): Promise<void> {
     const apply = process.argv.includes('--apply');
+    if (
+        process.argv.includes('--threads') ||
+        process.argv.includes('--thread-files')
+    ) {
+        await threads(apply, process.argv.includes('--thread-files'));
+        return;
+    }
     if (process.argv.includes('--buckets')) {
         const bifrostDb = connect('BF_DB', 'bifrost-history-rewrite');
         const fluxerDb = connect('BF_FLUXER_DB', 'bifrost-history-rewrite');
