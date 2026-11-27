@@ -11,6 +11,7 @@ import {
 import {
     FluxerGuildReader,
     fluxerChannel,
+    fluxerRole,
 } from '../../src/guild-sync/readers/fluxer';
 
 /** A private thread as either library returns it. */
@@ -298,5 +299,31 @@ describe('forum fields the readers must not misread', () => {
         );
         assert.equal(snap.topic, 'rules');
         assert.equal(snap.defaultThreadSlowmode, 0);
+    });
+});
+
+describe('Fluxer role permissions', () => {
+    it('takes them from the raw role list, which keeps the thread bits', () => {
+        // @fluxerjs/core's parsed bitfield drops bits 34-38.
+        const role = {
+            id: 'r1',
+            name: 'Administrator',
+            color: 0,
+            hoist: false,
+            mentionable: false,
+            position: 1,
+            unicodeEmoji: null,
+            permissions: { bitfield: BigInt(8) },
+        };
+        const withThreads = (BigInt(8) | (BigInt(1) << BigInt(34))).toString();
+        const snap = fluxerRole(
+            role as unknown as Parameters<typeof fluxerRole>[0],
+            new Map([['r1', withThreads]])
+        );
+        assert.equal(snap.permissions, withThreads);
+        const plain = fluxerRole(
+            role as unknown as Parameters<typeof fluxerRole>[0]
+        );
+        assert.equal(plain.permissions, '8');
     });
 });

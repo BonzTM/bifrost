@@ -141,6 +141,77 @@ describe('name sync on Postgres', { skip: !url }, () => {
         assert.equal(await store.archivedNames('100', '601'), null);
     });
 
+    it("lowers a channel's search bound only when it is above the bucket", async () => {
+        const key = (id: string) =>
+            `{"__fluxer_type":"bigint","value":"${id}"}`;
+        for (const [id, bucket] of [
+            ['950', 434],
+            ['951', 100],
+        ] as const) {
+            await fluxer.query(
+                `INSERT INTO fluxer_kv (table_name, partition_key, row_key, row_data) VALUES ('channel_state', $1, $1, $2::jsonb)`,
+                {
+                    bind: [
+                        key(id),
+                        JSON.stringify({
+                            channel_id: bigintValue(id),
+                            created_bucket: bucket,
+                        }),
+                    ],
+                }
+            );
+        }
+        const writer = new FluxerNameWriter({
+            rows: <T extends object>(sql: string, bind: readonly unknown[]) =>
+                fluxer.query<T>(sql, {
+                    bind: [...bind],
+                    type: QueryTypes.SELECT,
+                }),
+        });
+        // 573091117793280000 is in bucket 158.
+        const oldest = new Map([
+            ['950', '573091117793280000'],
+            ['951', '573091117793280000'],
+        ]);
+        assert.equal(await writer.lowerBuckets(oldest), 1);
+        assert.equal(await writer.lowerBuckets(oldest), 0);
+        const rows = await fluxer.query<{ id: string; b: number }>(
+            `SELECT row_data->'channel_id'->>'value' AS id, (row_data->>'created_bucket')::int AS b
+             FROM fluxer_kv WHERE table_name = 'channel_state' ORDER BY 1`,
+            { type: QueryTypes.SELECT }
+        );
+        assert.deepEqual(rows, [
+            { id: '950', b: 158 },
+            { id: '951', b: 100 },
+        ]);
+        await fluxer.query(
+            `DELETE FROM fluxer_kv WHERE table_name = 'channel_state'`
+        );
+    });
+
+    it("retries authors that ran out of tries, and finds each channel's oldest moved copy", async () => {
+        const store = new PostgresNameStore(bifrost);
+        await bifrost.query(
+            `INSERT INTO ${TABLES.nameSync} ("guildId", "discordUserId", dirty, failures) VALUES ('100', '700', false, 5)`
+        );
+        await store.retryFailed();
+        const [row] = await bifrost.query<{ dirty: boolean; failures: number }>(
+            `SELECT dirty, failures FROM ${TABLES.nameSync} WHERE "discordUserId" = '700'`,
+            { type: QueryTypes.SELECT }
+        );
+        assert.deepEqual(row, { dirty: true, failures: 0 });
+        await bifrost.query(
+            `UPDATE ${TABLES.historyMessages} SET native = true WHERE "discordMessageId" IN ('11', '12')`
+        );
+        assert.deepEqual([...(await store.oldestNative(10))], [['300', '11']]);
+        await bifrost.query(
+            `DELETE FROM ${TABLES.nameSync} WHERE "discordUserId" = '700'`
+        );
+        await bifrost.query(
+            `UPDATE ${TABLES.historyMessages} SET native = false`
+        );
+    });
+
     it('seeds authors once, and tracks what was applied', async () => {
         const store = new PostgresNameStore(bifrost);
         await store.seed('100', GUILD_LINK);

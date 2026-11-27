@@ -1,10 +1,12 @@
-import { messageRowKey } from '../fluxer-db/keys';
+import { bucketOf, messageRowKey } from '../fluxer-db/keys';
 import type { FluxerDb } from '../fluxer-db/pool';
 import type { CopyRef } from './store';
 import { chunks } from './names';
 
 /** Keys sent per call; bifrost.set_webhook_names refuses more. */
 export const NAME_BATCH = 500;
+/** Channels sent per call; bifrost.lower_created_buckets refuses more. */
+export const BUCKET_BATCH = 1_000;
 
 /**
  * Sets webhook_name on Fluxer copies through the bifrost.set_webhook_names
@@ -32,6 +34,28 @@ export class FluxerNameWriter {
             [ownerId]
         );
         return countOf(rows);
+    }
+
+    /**
+     * Keeps each channel's search lower bound at or below its oldest moved
+     * copy (bifrost.lower_created_buckets). Fluxer resets the bound on every
+     * new message, and its search rebuild never reads below it. Takes
+     * channel ID → oldest message ID. Returns how many channels changed.
+     */
+    async lowerBuckets(oldest: ReadonlyMap<string, string>): Promise<number> {
+        const entries = [...oldest].map(([channel, message]) => ({
+            channel_id: channel,
+            bucket: bucketOf(message),
+        }));
+        let changed = 0;
+        for (const batch of chunks(entries, BUCKET_BATCH)) {
+            const rows = await this.db.rows<{ changed: unknown }>(
+                'SELECT bifrost.lower_created_buckets($1::jsonb) AS changed',
+                [JSON.stringify(batch)]
+            );
+            changed += countOf(rows);
+        }
+        return changed;
     }
 
     /** Renames the copies. Returns how many rows changed. */

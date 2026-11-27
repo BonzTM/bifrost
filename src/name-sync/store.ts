@@ -146,6 +146,34 @@ export class PostgresNameStore {
         );
     }
 
+    /**
+     * Makes authors that ran out of tries due again. Called once per start,
+     * so a fix shipped since (such as the archive fallback) gets its turn.
+     */
+    async retryFailed(): Promise<void> {
+        await this.db.query(
+            `UPDATE ${TABLES.nameSync} SET failures = 0, dirty = true
+             WHERE failures >= $1`,
+            { bind: [MAX_NAME_FAILURES], type: QueryTypes.UPDATE }
+        );
+    }
+
+    /**
+     * The oldest history copy that took its Discord ID, per Fluxer channel
+     * or thread, for keeping Fluxer's search lower bound below it.
+     */
+    async oldestNative(limit: number): Promise<Map<string, string>> {
+        const rows = await this.db.query<Row>(
+            `SELECT "fluxerTargetId", min("discordMessageId"::numeric)::text AS oldest
+             FROM ${TABLES.historyMessages} WHERE native
+             GROUP BY "fluxerTargetId" LIMIT $1`,
+            { bind: [limit], type: QueryTypes.SELECT }
+        );
+        return new Map(
+            rows.map((r) => [text(r, 'fluxerTargetId'), text(r, 'oldest')])
+        );
+    }
+
     async isOptedOut(discordUserId: string): Promise<boolean> {
         const rows = await this.db.query<Row>(
             `SELECT 1 FROM ${TABLES.historyOptOuts} WHERE "discordUserId" = $1 LIMIT 1`,
