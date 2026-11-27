@@ -197,9 +197,36 @@ export class PostgresNameStore {
         );
         const row = rows[0];
         if (!row || typeof row.username !== 'string' || row.username === '')
-            return null;
+            return this.messageAuthor(guildId, discordUserId);
         return {
             nick: optText(row, 'nick'),
+            globalName: optText(row, 'globalName'),
+            username: row.username,
+        };
+    }
+
+    /**
+     * The author fields of the member's newest archived message. Every
+     * archived message carries its author, even when no member snapshot
+     * was taken (for a deleted account Discord sends "Deleted User").
+     */
+    private async messageAuthor(
+        guildId: string,
+        discordUserId: string
+    ): Promise<DiscordNames | null> {
+        const rows = await this.db.query<Row>(
+            `SELECT raw->'author'->>'username' AS username,
+                    raw->'author'->>'global_name' AS "globalName"
+             FROM ${TABLES.archiveMessages}
+             WHERE "guildId" = $1 AND "authorId" = $2 AND raw IS NOT NULL
+             ORDER BY "createdAt" DESC LIMIT 1`,
+            { bind: [guildId, discordUserId], type: QueryTypes.SELECT }
+        );
+        const row = rows[0];
+        if (!row || typeof row.username !== 'string' || row.username === '')
+            return null;
+        return {
+            nick: null,
             globalName: optText(row, 'globalName'),
             username: row.username,
         };

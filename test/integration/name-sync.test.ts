@@ -139,6 +139,26 @@ describe('name sync on Postgres', { skip: !url }, () => {
             username: 'old',
         });
         assert.equal(await store.archivedNames('100', '601'), null);
+        await bifrost.query(
+            `INSERT INTO ${TABLES.archiveMessages} ("messageId", "channelId", "guildId", "authorId", "createdAt", raw, redacted, "fetchedAt")
+             VALUES ('14', '200', '100', '602', now(), $1::jsonb, false, now())`,
+            {
+                bind: [
+                    JSON.stringify({
+                        author: {
+                            id: '602',
+                            username: 'Deleted User',
+                            global_name: null,
+                        },
+                    }),
+                ],
+            }
+        );
+        assert.deepEqual(await store.archivedNames('100', '602'), {
+            nick: null,
+            globalName: null,
+            username: 'Deleted User',
+        });
     });
 
     it("lowers a channel's search bound only when it is above the bucket", async () => {
