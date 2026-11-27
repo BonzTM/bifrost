@@ -19,6 +19,21 @@ export class FluxerNameWriter {
         await this.setBatch([], 'check');
     }
 
+    /**
+     * Gives every thread a webhook owns to `ownerId`, the bot
+     * (bifrost.give_webhook_threads). Guild-sync's forum posts are made
+     * through a webhook, so otherwise every copy shows the OP tag. Returns
+     * how many threads changed.
+     */
+    async giveWebhookThreads(ownerId: string): Promise<number> {
+        if (!/^\d{1,20}$/.test(ownerId)) throw new Error('Not a user ID');
+        const rows = await this.db.rows<{ changed: unknown }>(
+            'SELECT bifrost.give_webhook_threads($1) AS changed',
+            [ownerId]
+        );
+        return countOf(rows);
+    }
+
     /** Renames the copies. Returns how many rows changed. */
     async rename(copies: readonly CopyRef[], name: string): Promise<number> {
         const keys = copies.map((c) => messageRowKey(c.channelId, c.messageId));
@@ -34,10 +49,15 @@ export class FluxerNameWriter {
             'SELECT bifrost.set_webhook_names($1::text[], $2) AS changed',
             [keys, name]
         );
-        const changed = rows[0]?.changed;
-        if (typeof changed !== 'number' || changed < 0) {
-            throw new Error('set_webhook_names returned no count');
-        }
-        return changed;
+        return countOf(rows);
     }
+}
+
+/** The count a bridge function returns. */
+function countOf(rows: readonly { changed: unknown }[]): number {
+    const changed = rows[0]?.changed;
+    if (typeof changed !== 'number' || changed < 0) {
+        throw new Error('The bridge function returned no count');
+    }
+    return changed;
 }

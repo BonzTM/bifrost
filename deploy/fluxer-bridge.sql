@@ -55,3 +55,37 @@ $$;
 
 REVOKE ALL ON FUNCTION bifrost.set_webhook_names(text[], text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION bifrost.set_webhook_names(text[], text) TO bifrost_bridge;
+
+-- Gives threads a webhook owns to p_owner (the bot's user ID). Guild-sync
+-- creates forum posts through a webhook, and Fluxer then shows the OP tag
+-- on every copy, because each copy's author is that same webhook
+-- (fluxer_app ForumChannelUtils.ts isOriginalPoster). Threads people start
+-- keep their owner. Returns how many threads changed.
+CREATE OR REPLACE FUNCTION bifrost.give_webhook_threads(p_owner text)
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+    changed integer;
+BEGIN
+    IF p_owner IS NULL OR p_owner !~ '^[0-9]{1,20}$' THEN
+        RAISE EXCEPTION 'give_webhook_threads needs a user ID';
+    END IF;
+    UPDATE public.fluxer_kv c
+    SET row_data = c.row_data || jsonb_build_object('owner_id',
+            jsonb_build_object('__fluxer_type', 'bigint', 'value', p_owner)),
+        updated_at = now()
+    WHERE c.table_name = 'channels'
+      AND (c.row_data ->> 'type') IN ('10', '11', '12')
+      AND c.row_data -> 'owner_id' ->> 'value' IN (
+          SELECT w.row_data -> 'webhook_id' ->> 'value'
+          FROM public.fluxer_kv w WHERE w.table_name = 'webhooks');
+    GET DIAGNOSTICS changed = ROW_COUNT;
+    RETURN changed;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION bifrost.give_webhook_threads(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION bifrost.give_webhook_threads(text) TO bifrost_bridge;

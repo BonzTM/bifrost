@@ -207,3 +207,27 @@ describe('copy routes', () => {
         assert.deepEqual(copyRoutes(copy('900', null)), []);
     });
 });
+
+describe('giveWebhookThreads', () => {
+    it('passes the bot ID and returns the count', async () => {
+        const calls: unknown[][] = [];
+        const writer = new FluxerNameWriter({
+            rows: async <T extends object>(
+                _sql: string,
+                bind: readonly unknown[]
+            ) => {
+                calls.push([...bind]);
+                return [{ changed: 3 }] as unknown as T[];
+            },
+        });
+        assert.equal(await writer.giveWebhookThreads('1565044763378319360'), 3);
+        assert.deepEqual(calls, [['1565044763378319360']]);
+    });
+
+    it('refuses anything but a user ID', async () => {
+        const writer = new FluxerNameWriter({
+            rows: async <T extends object>() => [] as T[],
+        });
+        await assert.rejects(writer.giveWebhookThreads("1' OR 1=1"));
+    });
+});
