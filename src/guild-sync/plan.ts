@@ -63,6 +63,10 @@ function describeOp(op: PlanOp): string {
         }
         case 'update':
             return `update ${op.kind} ${op.destId}: ${op.changes.map((c) => c.field).join(', ')}${op.baseline ? ' (first sync)' : ''}`;
+        case 'write-back':
+            return op.changes.length === 0
+                ? `record thread ${op.destId}: ${Object.keys(op.settled).join(', ')} (already equal on both sides)`
+                : `write back thread ${op.destId} to ${op.sourceId}: ${op.changes.map((c) => c.field).join(', ')} (edited on the destination)`;
         case 'reorder':
             return `reorder ${op.kind}s in ${op.scope} (${op.destIds.length})`;
         case 'link':

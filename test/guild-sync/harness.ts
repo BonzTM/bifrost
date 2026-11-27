@@ -10,6 +10,7 @@ import {
     FakeAssets,
     FakeLinker,
     FakeReader,
+    FakeSourceThreads,
     FakeStore,
     FakeThreadSource,
     recordingNotices,
@@ -33,12 +34,16 @@ export function setup(source: GuildSnapshot, mode: AddonMode = 'dry-run') {
     store.settings = { ...DEFAULT_SETTINGS, mode: 'apply' };
     const guild = new FakeGuild(fluxerGuild());
     const discord = new FakeReader({ ok: true, snapshot: source });
+    // Fluxer edits of thread settings are written back to this snapshot.
+    const discordThreads = new FakeSourceThreads(discord);
     const assets = new FakeAssets();
     const linker = new FakeLinker();
     const wiring = {
         links: null as FakeLinker | null,
         ready: undefined as ReadonlySet<string> | undefined,
         excluded: new Set<string>() as ReadonlySet<string>,
+        writeBack: true,
+        importing: undefined as ReadonlySet<string> | undefined,
     };
     const notices = recordingNotices();
     const pauses: number[] = [];
@@ -48,6 +53,10 @@ export function setup(source: GuildSnapshot, mode: AddonMode = 'dry-run') {
         store,
         readers: { discord, fluxer: guild },
         writers: { fluxer: guild },
+        threadWriters: wiring.writeBack ? { discord: discordThreads } : {},
+        historyThreads: wiring.importing
+            ? async () => wiring.importing ?? new Set<string>()
+            : undefined,
         assets: { discord: assets },
         links: wiring.links,
         excludedChannels: wiring.excluded,
@@ -80,6 +89,7 @@ export function setup(source: GuildSnapshot, mode: AddonMode = 'dry-run') {
         store,
         guild,
         discord,
+        discordThreads,
         assets,
         linker,
         /** Turns on channel linking, as the running bot has it. */
@@ -89,6 +99,14 @@ export function setup(source: GuildSnapshot, mode: AddonMode = 'dry-run') {
         /** Sets BF_ADDONS_EXCLUDE_CHANNELS. */
         exclude: (ids: string[]) => {
             wiring.excluded = new Set(ids);
+        },
+        /** Takes away the Discord thread writer for write-backs. */
+        noWriteBack: () => {
+            wiring.writeBack = false;
+        },
+        /** Discord threads whose history import is not finished. */
+        importing: (ids: ReadonlySet<string>) => {
+            wiring.importing = ids;
         },
         /** Turns on history gating with this set of copied channels. */
         historyReady: (ready: ReadonlySet<string>) => {

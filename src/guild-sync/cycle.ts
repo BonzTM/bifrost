@@ -72,6 +72,15 @@ export interface CycleDeps {
         readonly discord?: GuildWriter;
         readonly fluxer?: GuildWriter;
     };
+    /**
+     * Thread settings writers for the source side: thread settings sync
+     * both ways, so a destination edit is written back to the source
+     * thread (threadSettings.ts). A side without one gets no write-backs.
+     */
+    readonly threadWriters?: {
+        readonly discord?: Pick<GuildWriter, 'updateThread'>;
+        readonly fluxer?: Pick<GuildWriter, 'updateThread'>;
+    };
     /** Emoji and sticker images, by the side they are read from. */
     readonly assets: {
         readonly discord?: AssetSource;
@@ -86,6 +95,11 @@ export interface CycleDeps {
      * may be bridged. Undefined when history import is off.
      */
     readonly historyReady?: (linkId: string) => Promise<ReadonlySet<string>>;
+    /**
+     * With history import on: Discord threads whose import is not
+     * finished (DiffInput.importing). Undefined when history import is off.
+     */
+    readonly historyThreads?: (linkId: string) => Promise<ReadonlySet<string>>;
     /** First messages of threads and posts, by the side they are read from. */
     readonly threadSources: {
         readonly discord?: ThreadSource;
@@ -413,6 +427,21 @@ async function trackedRows(
     return applyDestMissing(rows, destMissing);
 }
 
+/**
+ * Source threads whose history import is not finished. History is copied
+ * from Discord only, so a link with Fluxer as its source has none.
+ */
+async function importingThreads(
+    link: LinkedGuild,
+    settings: SyncSettings,
+    deps: CycleDeps
+): Promise<ReadonlySet<string> | undefined> {
+    if (!deps.historyThreads || settings.direction !== 'discord-to-fluxer') {
+        return undefined;
+    }
+    return deps.historyThreads(link.id);
+}
+
 /** The map with missing counts updated, and the diff. */
 async function diffWithMap(
     link: LinkedGuild,
@@ -439,6 +468,7 @@ async function diffWithMap(
         links,
         bridged,
         enforceDrift: settings.enforceDrift,
+        importing: await importingThreads(link, settings, deps),
     });
     const historyLocked = historyLocks(source.channels, {
         ready: links?.historyReady,
@@ -748,6 +778,7 @@ async function applySaved(
             assets,
             links: deps.links,
             threads: deps.threadSources[sourceSide] ?? null,
+            sourceThreads: deps.threadWriters?.[sourceSide] ?? null,
             canWrite: () => deps.processMode() !== 'read-only',
             writesStopped: () => applyStopped(plan.guildLinkId, deps),
             stillLeader: deps.stillLeader,

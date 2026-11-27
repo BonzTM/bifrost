@@ -48,8 +48,11 @@ async function refusedAsClosed(
  * (MessageDeleteService deleteWebhookMessage).
  */
 export interface EditorThreads {
-    /** The Discord thread's state now (HistoryPorts.threadState). */
-    discordState(discordThreadId: string): Promise<ThreadFlags>;
+    /** The Fluxer thread's state now (HistoryPorts.fluxerThreadState). */
+    fluxerState(
+        guildLinkId: string,
+        fluxerThreadId: string
+    ): Promise<ThreadFlags>;
     /** Sets a Fluxer thread's archived and locked flags. */
     setState(
         guildLinkId: string,
@@ -147,7 +150,10 @@ export class HistoryEditor {
     /**
      * Runs an edit. When Fluxer refuses it because the copy's thread is
      * archived or locked, the thread is opened for the edit alone and
-     * closed again as it was, even when the second try fails.
+     * closed again as it was, even when the second try fails. "As it was"
+     * is the Fluxer thread's own state, read before it is opened: thread
+     * settings sync both ways, so any other state left behind would be
+     * written back to Discord as a Fluxer edit (guild-sync threadSettings.ts).
      */
     private async whileEditable(
         copy: ImportedMessage,
@@ -156,35 +162,15 @@ export class HistoryEditor {
     ): Promise<void> {
         const threads = this.threads;
         if (!copy.inThread || !threads) return edit();
-        const code = await refusedAsClosed(edit);
-        if (code === null) return;
-        const before = await this.stateBefore(threads, copy, job, code);
+        const refused = await refusedAsClosed(edit);
+        if (refused === null) return;
         const threadId = copy.fluxerTargetId;
+        const before = await threads.fluxerState(job.guildLinkId, threadId);
         await threads.setState(job.guildLinkId, threadId, OPEN);
         try {
             await edit();
         } finally {
             await threads.setState(job.guildLinkId, threadId, before);
         }
-    }
-
-    /**
-     * The thread's state before it was opened. Fluxer checks archived
-     * before locked, so THREAD_LOCKED means not archived. An archived
-     * thread is locked when its Discord thread is; an archive thread of
-     * history is always kept locked.
-     */
-    private async stateBefore(
-        threads: EditorThreads,
-        copy: ImportedMessage,
-        job: HistoryJob,
-        code: string
-    ): Promise<ThreadFlags> {
-        if (code === 'THREAD_LOCKED') return { archived: false, locked: true };
-        const imported =
-            job.kind === 'thread' && job.fluxerId === copy.fluxerTargetId;
-        if (!imported) return { archived: true, locked: true };
-        const { locked } = await threads.discordState(job.discordId);
-        return { archived: true, locked };
     }
 }

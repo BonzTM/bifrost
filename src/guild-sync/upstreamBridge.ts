@@ -666,8 +666,9 @@ export class UpstreamBridge
      * auto-archive and pin, where they differ. The pin is its own edit:
      * Discord refuses it when the forum has a pinned post already, and
      * that must not cost the other settings. Needs Manage Threads; what
-     * Discord refuses keeps Discord's default, which the sync then reports
-     * as drift instead of writing it to Fluxer. The thread returned is
+     * Discord refuses keeps Discord's default, which the sync never writes
+     * to Fluxer: the next cycle tries to write the Fluxer value back to
+     * Discord instead (threadSettings.ts). The thread returned is
      * the one the last edit that took gave back, so its look is the copy's.
      */
     private async matchSettings(
@@ -1103,6 +1104,16 @@ export class UpstreamBridge
             archived: thread.archived ?? false,
             locked: thread.locked ?? false,
         };
+    }
+
+    async fluxerThreadState(fluxerThreadId: string) {
+        const thread = await this.fluxer().channels.fetch(fluxerThreadId, {
+            force: true,
+        });
+        if (!(thread instanceof FluxerThreadChannel)) {
+            throw new Error(`Fluxer channel ${fluxerThreadId} is not a thread`);
+        }
+        return { archived: thread.archived, locked: thread.locked };
     }
 
     async linkCreatedAt(discordChannelId: string): Promise<Date | null> {

@@ -11,6 +11,7 @@ import {
     FLUXER_FALLBACK_WATCH_MS,
     followFluxerClient,
     listenToDiscordThreads,
+    listenToFluxerThreadSettings,
     listenToFluxerThreads,
 } from '../../src/guild-sync/threadEvents';
 import type { ThreadRelay } from '../../src/guild-sync/threadRelay';
@@ -223,5 +224,88 @@ describe('followFluxerClient', () => {
         t.mock.timers.tick(FLUXER_FALLBACK_WATCH_MS);
         assert.deepEqual(log, ['attach']);
         stop();
+    });
+});
+
+describe('Fluxer thread settings events', () => {
+    /** A Fluxer thread as the library caches it. */
+    function fluxerThread(id: string, over: Record<string, unknown> = {}) {
+        const fields = {
+            id,
+            parentId: 'f-forum',
+            name: 'Patch notes',
+            archived: false,
+            locked: false,
+            appliedTags: ['t1'],
+            flags: 0,
+            rateLimitPerUser: 0,
+            autoArchiveDuration: 1440,
+            ...over,
+        };
+        const descriptors = Object.fromEntries(
+            Object.entries(fields).map(([k, value]) => [k, { value }])
+        );
+        return Object.create(ThreadChannel.prototype, descriptors) as object;
+    }
+
+    function listen() {
+        const { wrap, flush } = fakeRelay();
+        const client = new EventEmitter();
+        const notified: string[] = [];
+        const synced = new Set(['f-post']);
+        const stop = listenToFluxerThreadSettings(
+            client as unknown as FluxerClient,
+            async (id) => synced.has(id),
+            () => notified.push('notify'),
+            wrap
+        );
+        const update = (old: object, next: object) =>
+            client.emit(FluxerEvents.ThreadUpdate, old, next);
+        return { client, notified, flush, stop, update };
+    }
+
+    it('schedules a cycle when a synced thread’s settings change', async () => {
+        const l = listen();
+        l.update(
+            fluxerThread('f-post'),
+            fluxerThread('f-post', { archived: true })
+        );
+        await l.flush();
+        assert.deepEqual(l.notified, ['notify']);
+    });
+
+    it('ignores threads the sync does not hold and other channels', async () => {
+        const l = listen();
+        l.update(
+            fluxerThread('f-other'),
+            fluxerThread('f-other', { name: 'Renamed' })
+        );
+        l.update({ id: 'f-post' }, { id: 'f-post', name: 'Renamed' });
+        await l.flush();
+        assert.deepEqual(l.notified, []);
+    });
+
+    it('ignores updates that change no synced setting', async () => {
+        const l = listen();
+        l.update(
+            fluxerThread('f-post'),
+            fluxerThread('f-post', { lastMessageId: '5' })
+        );
+        await l.flush();
+        assert.deepEqual(l.notified, []);
+    });
+
+    it('counts an update without a cached copy to compare', async () => {
+        const l = listen();
+        const thread = fluxerThread('f-post');
+        l.update(thread, thread);
+        await l.flush();
+        assert.deepEqual(l.notified, ['notify']);
+    });
+
+    it('stops listening', async () => {
+        const l = listen();
+        l.stop();
+        assert.equal(l.client.listenerCount(FluxerEvents.ThreadUpdate), 0);
     });
 });

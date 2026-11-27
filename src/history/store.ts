@@ -464,6 +464,21 @@ export class PostgresHistoryStore implements HistoryStore {
         return new Set(rows.map((row) => str(row, 'discordId')));
     }
 
+    /**
+     * Discord threads of a link whose import is not done: pending,
+     * importing or failed. Their Fluxer copies are opened and closed by
+     * the import, so guild-sync writes none of their settings back.
+     */
+    async threadsImporting(guildLinkId: string): Promise<Set<string>> {
+        const rows = await this.db.query<Row>(
+            `SELECT "discordId" FROM ${TABLES.historyJobs}
+             WHERE "guildLinkId" = $1 AND kind = 'thread' AND status <> 'done'
+             LIMIT $2`,
+            { bind: [guildLinkId, MAX_JOBS], type: QueryTypes.SELECT }
+        );
+        return new Set(rows.map((row) => str(row, 'discordId')));
+    }
+
     async isArchiveThread(fluxerThreadId: string): Promise<boolean> {
         const rows = await this.db.query<Row>(
             `SELECT 1 FROM ${TABLES.historyJobs} WHERE "archiveThreadId" = $1 LIMIT 1`,

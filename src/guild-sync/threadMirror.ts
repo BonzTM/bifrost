@@ -9,13 +9,15 @@ import type { ThreadMessageEvent } from './threadRelay';
 /**
  * Copies a thread or forum post started on Fluxer to Discord, so the thread
  * relay has a pair to relay its replies to, both ways. Structure syncs from
- * Discord, so the new Discord thread becomes the source of that pair: later
- * renames on Discord follow to Fluxer, and edits on Fluxer count as drift.
+ * Discord, so the new Discord thread becomes the source of that pair. Its
+ * settings sync both ways (threadSettings.ts): later edits on Discord
+ * follow to Fluxer, and later edits on Fluxer are written back to Discord.
  *
  * The copy takes the Fluxer thread's settings where Discord allows them,
  * and the map row records the copy's own settings as written. The next
- * cycle then finds nothing to change on the Fluxer thread; a setting the
- * copy could not take shows as drift, which is reported and never written.
+ * cycle then writes nothing to the Fluxer thread; a setting the copy could
+ * not take differs on Fluxer only, so that cycle tries once more to write
+ * it back to Discord, and a refusal is reported as a failed write.
  *
  * A private Fluxer thread becomes a private Discord thread with the linked
  * Discord accounts of its members, or is not copied at all.

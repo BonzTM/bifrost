@@ -26,16 +26,22 @@ import { FluxerGuildReader } from './readers/fluxer';
 import { DEFAULT_SCHEDULE, SyncScheduler } from './scheduler';
 import { PostgresHistoryStore } from '../history/store';
 import { PostgresIdentityStore } from '../identity/store';
-import { PostgresGuildSyncStore, type GuildSyncStore } from './store';
+import {
+    PostgresGuildSyncStore,
+    type GuildSyncStore,
+    type ThreadRelayStore,
+} from './store';
 import { StatusBoard } from './statusBoard';
 import type { StatusSignal } from './statusSignal';
 import {
     followFluxerClient,
     listenToDiscordThreads,
+    listenToFluxerThreadSettings,
     listenToFluxerThreads,
 } from './threadEvents';
 import { ThreadRelay, type ThreadRelayPorts } from './threadRelay';
 import { ThreadResetRunner, type ThreadResetPort } from './threadResetJob';
+import { DiscordThreadWriter } from './writers/discord';
 import { FluxerGuildWriter, type FluxerWebhookSend } from './writers/fluxer';
 
 export const ADDON_NAME = 'guild-sync';
@@ -176,6 +182,11 @@ function historyReady(store: PostgresHistoryStore) {
     return (linkId: string) => store.channelsReadyToBridge(linkId);
 }
 
+/** Discord threads whose history import is not finished. */
+function historyThreads(store: PostgresHistoryStore) {
+    return (linkId: string) => store.threadsImporting(linkId);
+}
+
 /** What a cycle needs: the store, both platforms and the clock. */
 function buildCycleDeps(
     deps: GuildSyncDeps,
@@ -196,6 +207,12 @@ function buildCycleDeps(
                 (message) => context.logger.warn(message)
             ),
         },
+        // Thread settings sync both ways: Fluxer edits are written back.
+        threadWriters: {
+            discord: new DiscordThreadWriter(deps.discordClient, (message) =>
+                context.logger.warn(message)
+            ),
+        },
         assets: {
             discord: new DiscordAssetSource(deps.discordClient),
         },
@@ -203,6 +220,9 @@ function buildCycleDeps(
         excludedChannels: deps.excludedChannels,
         historyReady: deps.historyEnabled
             ? historyReady(new PostgresHistoryStore(deps.sequelize))
+            : undefined,
+        historyThreads: deps.historyEnabled
+            ? historyThreads(new PostgresHistoryStore(deps.sequelize))
             : undefined,
         threadSources: { discord: deps.bridge },
         notices: new NoticeBoard(
@@ -388,6 +408,28 @@ function startThreadRelay(
 }
 
 /**
+ * Schedules a cycle when a synced Fluxer thread's settings change, so the
+ * edit is written back to Discord soon (threadSettings.ts). Follows the
+ * Fluxer client as the relay's listeners do. Returns its stop function.
+ */
+function watchFluxerThreadSettings(
+    deps: GuildSyncDeps,
+    context: AddonContext,
+    store: Pick<ThreadRelayStore, 'findThreadPair'>,
+    notify: () => void
+): () => void {
+    const wrap = <A extends unknown[]>(
+        task: string,
+        fn: (...args: A) => Promise<void> | void
+    ) => context.boundary.handler(ADDON_NAME, task, fn);
+    const isSynced = async (id: string) =>
+        (await store.findThreadPair('fluxer', id)) !== null;
+    return followFluxerClient(deps.fluxerClientRef, (client) =>
+        listenToFluxerThreadSettings(client, isSynced, notify, wrap)
+    );
+}
+
+/**
  * Attaches the runner for `sync reset-threads`. Returns its stop function.
  * `after` hears when a reset ended, for the status and the next cycle.
  */
@@ -429,7 +471,7 @@ function startThreadResets(
  * The guild-sync add-on. Every cycle saves a plan and logs its summary. A
  * plan is applied only when the environment allows apply and an admin set
  * the link to apply. Structure is written only to Fluxer. Messages inside
- * synced threads are relayed both ways.
+ * synced threads are relayed both ways, and so are thread settings.
  */
 export function createGuildSyncAddon(deps: GuildSyncDeps): Addon {
     let scheduler: SyncScheduler | null = null;
@@ -438,6 +480,7 @@ export function createGuildSyncAddon(deps: GuildSyncDeps): Addon {
     let status: StatusBoard | null = null;
     let stopListening: (() => void) | null = null;
     let stopResets: (() => Promise<void>) | null = null;
+    let stopFluxerSettings: (() => void) | null = null;
 
     return {
         name: ADDON_NAME,
@@ -504,6 +547,12 @@ export function createGuildSyncAddon(deps: GuildSyncDeps): Addon {
             );
             for (const event of SOURCE_EVENTS)
                 deps.discordClient.on(event, listener);
+            stopFluxerSettings = watchFluxerThreadSettings(
+                deps,
+                context,
+                store,
+                () => active.notify()
+            );
             scheduler = active;
             active.start();
         },
@@ -513,6 +562,8 @@ export function createGuildSyncAddon(deps: GuildSyncDeps): Addon {
                     deps.discordClient.off(event, listener);
             }
             listener = null;
+            stopFluxerSettings?.();
+            stopFluxerSettings = null;
             stopListening?.();
             stopListening = null;
             const relayStopped = stopRelay?.();

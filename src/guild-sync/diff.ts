@@ -35,6 +35,11 @@ import {
     channelKind,
     copyType,
 } from './snapshot';
+import {
+    compareThread,
+    planThreadPair,
+    writableFields,
+} from './threadSettings';
 
 /** Fluxer refuses a 51st channel in one category (ChannelHelpers.ts). */
 export const MAX_CHANNELS_PER_CATEGORY = 50;
@@ -83,8 +88,16 @@ export interface DiffInput {
      * Revert destination edits to managed fields (`sync enforce on`): a
      * drifted field counts as a change. Unmanaged objects and bits stay
      * out of reach as always: the projections and ownership see to that.
+     * Thread settings are not enforced: they sync both ways, so a
+     * destination edit is written back instead (threadSettings.ts).
      */
     readonly enforceDrift?: boolean;
+    /**
+     * Source threads whose history import is not finished. Destination
+     * edits of their settings wait: the import opens and closes the copy
+     * on its own (history/importer.ts whileOpen).
+     */
+    readonly importing?: ReadonlySet<string>;
 }
 
 /**
@@ -172,6 +185,12 @@ interface ObjectSpec<T extends { readonly id: string; readonly name: string }> {
      * item waits, so it is never created outside its parent.
      */
     readonly waitingParent?: (item: T) => string | null;
+    /**
+     * Plans one mapped pair in place of the compare against the base
+     * (compareMapped, pushCompared). Threads use it: their settings sync
+     * both ways (threadSettings.ts).
+     */
+    readonly planMapped?: (item: T, dest: T, prev: T | undefined) => void;
 }
 
 /** One finding per missing parent, however many children wait on it. */
@@ -379,6 +398,10 @@ function diffObjects<T extends { readonly id: string; readonly name: string }>(
         const dest = destById.get(destId);
         if (!dest) {
             reportMissingCopy(out, spec.kind, item, destId);
+            continue;
+        }
+        if (spec.planMapped) {
+            spec.planMapped(item, dest, prevById.get(item.id));
             continue;
         }
         const compared = compareMapped(
@@ -772,9 +795,45 @@ function holdUnbridgedPosts(
     return kept;
 }
 
-/** Threads and forum posts whose parent channel is already mapped. */
-function diffThreads(input: DiffInput, ctx: ProjectionContext, out: Out) {
-    const { source, destination, previousSource } = input;
+/**
+ * Plans one mapped thread pair three ways (threadSettings.ts): source
+ * edits go to the destination, destination edits back to the source.
+ */
+function threadPlanner(input: DiffInput, ctx: ProjectionContext, out: Out) {
+    const { source, destination, importing } = input;
+    const sourceChannels = new Map(source.channels.map((c) => [c.id, c]));
+    const destChannels = new Map(destination.channels.map((c) => [c.id, c]));
+    return (
+        item: ThreadSnap,
+        dest: ThreadSnap,
+        prev: ThreadSnap | undefined
+    ) => {
+        const base =
+            ctx.map.applied('thread', item.id) ??
+            (prev ? projectSourceThread(prev, ctx) : null);
+        const writable = writableFields(item, dest, {
+            source: sourceChannels.get(item.parentId),
+            dest: destChannels.get(dest.parentId),
+        });
+        const compared = compareThread(
+            projectSourceThread(item, ctx),
+            projectDestThread(dest),
+            base,
+            writable
+        );
+        const pair = {
+            sourceId: item.id,
+            destId: dest.id,
+            held: importing?.has(item.id) === true,
+        };
+        const planned = planThreadPair(pair, compared);
+        out.ops.push(...planned.ops);
+        out.findings.push(...planned.findings);
+    };
+}
+
+/** One skipped finding per channel whose thread list is incomplete. */
+function reportThreadGaps(source: GuildSnapshot, out: Out): void {
     for (const parentId of source.threadGaps) {
         out.findings.push({
             type: 'skipped',
@@ -783,6 +842,12 @@ function diffThreads(input: DiffInput, ctx: ProjectionContext, out: Out) {
             detail: 'the thread list here is incomplete (unreadable, or more archived threads than one read pages through); no thread in this channel is removed until it is complete',
         });
     }
+}
+
+/** Threads and forum posts whose parent channel is already mapped. */
+function diffThreads(input: DiffInput, ctx: ProjectionContext, out: Out) {
+    const { source, destination, previousSource } = input;
+    reportThreadGaps(source, out);
     // Creates and updates follow the object map, so an incomplete list
     // cannot duplicate anything. Removals wait instead: trackMissing counts
     // no thread in a channel with a gap as missing.
@@ -811,10 +876,10 @@ function diffThreads(input: DiffInput, ctx: ProjectionContext, out: Out) {
             sameType: (a, b) => mapped(a) === b.parentId,
             skipReason: () => null,
             missingParent: (t) => goneParent(mapped(t), present),
+            planMapped: threadPlanner(input, ctx, out),
         },
         ctx.map,
-        out,
-        input.enforceDrift === true
+        out
     );
 }
 
