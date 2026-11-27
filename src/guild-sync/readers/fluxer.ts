@@ -279,14 +279,41 @@ async function readThreads(
     return { threads, gaps, privateGaps };
 }
 
-export function fluxerRole(r: Role): RoleSnap {
+/**
+ * Role permissions as the API sends them. @fluxerjs/core's parsed bitfield
+ * loses the thread bits (34-38), which its flag list does not have yet,
+ * so a role holding them looked edited on Fluxer every cycle.
+ */
+export async function rawRolePermissions(
+    guild: Guild
+): Promise<ReadonlyMap<string, string>> {
+    const rest = (guild.client as Partial<Client> | undefined)?.rest;
+    if (!rest) return new Map();
+    const raw = (await rest
+        .get(Routes.guildRoles(guild.id))
+        .catch(() => [])) as readonly { id?: unknown; permissions?: unknown }[];
+    const out = new Map<string, string>();
+    for (const r of Array.isArray(raw) ? raw : []) {
+        if (typeof r.id !== 'string' || typeof r.permissions !== 'string')
+            continue;
+        if (!/^\d{1,20}$/.test(r.permissions)) continue;
+        out.set(r.id, r.permissions);
+    }
+    return out;
+}
+
+export function fluxerRole(
+    r: Role,
+    rawPermissions: ReadonlyMap<string, string> = new Map()
+): RoleSnap {
     return {
         id: r.id,
         name: r.name,
         color: r.color,
         hoist: r.hoist,
         mentionable: r.mentionable,
-        permissions: r.permissions.bitfield.toString(),
+        permissions:
+            rawPermissions.get(r.id) ?? r.permissions.bitfield.toString(),
         position: r.position,
         // Fluxer has no managed roles.
         managed: false,
@@ -327,6 +354,7 @@ async function snapshotOf(guild: Guild): Promise<GuildSnapshot> {
         guild.fetchMe(),
         rawChannelFields(guild),
     ]);
+    const rolePermissions = await rawRolePermissions(guild);
     const { threads, gaps, privateGaps } = await readThreads(guild, channels);
     return {
         side: 'fluxer',
@@ -335,7 +363,7 @@ async function snapshotOf(guild: Guild): Promise<GuildSnapshot> {
         icon: guild.icon,
         banner: guild.banner,
         everyoneRoleId: guild.id,
-        roles: roles.map(fluxerRole),
+        roles: roles.map((r) => fluxerRole(r, rolePermissions)),
         channels: channels.map((c) => fluxerChannel(c, raw)),
         emojis: emojis.map(fluxerEmoji),
         stickers: stickers.map(fluxerSticker),

@@ -89,3 +89,41 @@ $$;
 
 REVOKE ALL ON FUNCTION bifrost.give_webhook_threads(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION bifrost.give_webhook_threads(text) TO bifrost_bridge;
+
+-- Sets channel_state.created_bucket to at most the given bucket, for up to
+-- 1000 channels. Fluxer's search rebuild never lists messages below a
+-- channel's created_bucket (fluxer_api MessageDataRepository.ts:152), and
+-- every new message resets it to the channel's creation bucket
+-- (MessageDataRepository.ts:547,565). Bifrost moved history copies to
+-- their Discord IDs, years before the channels were created, so it keeps
+-- the value lowered. p_buckets: [{"channel_id": "<id>", "bucket": <int>}].
+-- Returns how many channels changed.
+CREATE OR REPLACE FUNCTION bifrost.lower_created_buckets(p_buckets jsonb)
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+    changed integer;
+BEGIN
+    IF p_buckets IS NULL OR jsonb_typeof(p_buckets) <> 'array'
+        OR jsonb_array_length(p_buckets) > 1000 THEN
+        RAISE EXCEPTION 'lower_created_buckets takes an array of up to 1000 entries';
+    END IF;
+    UPDATE public.fluxer_kv s
+    SET row_data = s.row_data || jsonb_build_object('created_bucket', b.bucket),
+        updated_at = now()
+    FROM jsonb_to_recordset(p_buckets) AS b(channel_id text, bucket integer)
+    WHERE s.table_name = 'channel_state'
+      AND b.channel_id ~ '^[0-9]{1,20}$'
+      AND b.bucket >= 0
+      AND s.row_key = '{"__fluxer_type":"bigint","value":"' || b.channel_id || '"}'
+      AND COALESCE((s.row_data ->> 'created_bucket')::integer, 2147483647) > b.bucket;
+    GET DIAGNOSTICS changed = ROW_COUNT;
+    RETURN changed;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION bifrost.lower_created_buckets(jsonb) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION bifrost.lower_created_buckets(jsonb) TO bifrost_bridge;

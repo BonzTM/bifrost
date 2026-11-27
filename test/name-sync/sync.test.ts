@@ -243,3 +243,35 @@ describe('giveWebhookThreads', () => {
         await assert.rejects(writer.giveWebhookThreads("1' OR 1=1"));
     });
 });
+
+describe('lowerBuckets', () => {
+    it('sends each channel with the bucket of its oldest copy', async () => {
+        const calls: unknown[][] = [];
+        const writer = new FluxerNameWriter({
+            rows: async <T extends object>(
+                _sql: string,
+                bind: readonly unknown[]
+            ) => {
+                calls.push([...bind]);
+                return [{ changed: 1 }] as unknown as T[];
+            },
+        });
+        const oldest = new Map([['1575322911084904448', '573091117793280000']]);
+        assert.equal(await writer.lowerBuckets(oldest), 1);
+        assert.deepEqual(JSON.parse(String(calls[0]?.[0])), [
+            { channel_id: '1575322911084904448', bucket: 158 },
+        ]);
+    });
+
+    it('sends nothing for no channels', async () => {
+        const calls: unknown[] = [];
+        const writer = new FluxerNameWriter({
+            rows: async <T extends object>() => {
+                calls.push(1);
+                return [] as T[];
+            },
+        });
+        assert.equal(await writer.lowerBuckets(new Map()), 0);
+        assert.equal(calls.length, 0);
+    });
+});

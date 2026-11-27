@@ -174,6 +174,7 @@ export function createNameSyncAddon(deps: NameSyncAddonDeps): Addon {
             const writer = new FluxerNameWriter(db);
             await writer.check();
             const store = new PostgresNameStore(deps.sequelize);
+            await store.retryFailed();
             const sync = new PostgresGuildSyncStore(deps.sequelize);
             const names = new NameSync({
                 store,
@@ -195,8 +196,10 @@ export function createNameSyncAddon(deps: NameSyncAddonDeps): Addon {
                         more = (await names.pass(link)) || more;
                     }
                     if (seed && links.length > 0) seededAt = Date.now();
-                    if (links.length > 0)
+                    if (links.length > 0) {
                         await giveThreads(writer, deps, logger);
+                        await keepBuckets(writer, store, logger);
+                    }
                     return more;
                 },
                 BUSY_DELAY_MS,
@@ -229,6 +232,28 @@ async function giveThreads(
             logger.info(`[name-sync] ${changed} threads given to the bot`);
     } catch (error) {
         logger.warn(`[name-sync] Thread owners not fixed: ${describe(error)}`);
+    }
+}
+
+/** Channels and threads checked per pass at most. */
+const MAX_BUCKET_CHANNELS = 5_000;
+
+/** Keeps Fluxer's search lower bounds set; a failure waits for the next pass. */
+async function keepBuckets(
+    writer: FluxerNameWriter,
+    store: PostgresNameStore,
+    logger: AddonLogger
+): Promise<void> {
+    try {
+        const changed = await writer.lowerBuckets(
+            await store.oldestNative(MAX_BUCKET_CHANNELS)
+        );
+        if (changed > 0)
+            logger.info(`[name-sync] ${changed} search lower bounds kept`);
+    } catch (error) {
+        logger.warn(
+            `[name-sync] Search lower bounds not kept: ${describe(error)}`
+        );
     }
 }
 
