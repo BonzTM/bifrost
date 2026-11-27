@@ -183,6 +183,65 @@ export function listenToFluxerThreads(
     };
 }
 
+/**
+ * The Fluxer thread fields that thread settings sync compares
+ * (readers/fluxer.ts fluxerThread): only a change in one of them
+ * schedules a cycle.
+ */
+const SETTING_KEYS = [
+    'name',
+    'archived',
+    'locked',
+    'appliedTags',
+    'flags',
+    'rateLimitPerUser',
+    'autoArchiveDuration',
+] as const;
+
+/**
+ * True when a Fluxer thread update changed a synced setting. The library
+ * passes a shallow copy of the cached thread as the old one, or the new
+ * thread itself when it had none cached (@fluxerjs/core CHANNEL_UPDATE
+ * handler); without a copy to compare, the update counts.
+ */
+export function settingsChanged(old: unknown, next: object): boolean {
+    if (old === next || typeof old !== 'object' || old === null) return true;
+    const before = old as Record<string, unknown>;
+    const after = next as Record<string, unknown>;
+    return SETTING_KEYS.some(
+        (key) => JSON.stringify(before[key]) !== JSON.stringify(after[key])
+    );
+}
+
+/**
+ * Schedules a cycle when the settings of a synced Fluxer thread change,
+ * as Discord's ThreadUpdate does (index.ts SOURCE_EVENTS): the cycle
+ * writes the edit back to Discord (threadSettings.ts). The library emits
+ * ThreadUpdate for both CHANNEL_UPDATE and THREAD_UPDATE of a thread.
+ * Bifröst's own writes schedule a cycle too, which finds nothing to do.
+ * Returns a function that stops it.
+ */
+export function listenToFluxerThreadSettings(
+    client: FluxerClient,
+    isSynced: (fluxerThreadId: string) => Promise<boolean>,
+    notify: () => void,
+    wrap: Wrap
+): () => void {
+    const onUpdate = wrap(
+        'thread-settings',
+        async (old: unknown, next: unknown) => {
+            if (!(next instanceof ThreadChannel)) return;
+            if (!settingsChanged(old, next)) return;
+            if (!(await isSynced(next.id))) return;
+            notify();
+        }
+    );
+    client.on(FluxerEvents.ThreadUpdate, onUpdate);
+    return () => {
+        client.off(FluxerEvents.ThreadUpdate, onUpdate);
+    };
+}
+
 /** How often the Fluxer client is checked as a safety net. */
 export const FLUXER_WATCH_MS = 15_000;
 /** How often it is checked when assignments cannot be observed. */

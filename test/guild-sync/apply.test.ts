@@ -706,6 +706,143 @@ describe('channel links, forum tags and threads', () => {
         const post = s.guild.snapshot.threads.find((t) => t.name === 'Patch 2');
         assert.equal(post?.archived, true);
         assert.deepEqual(post?.tags, ['help']);
+        // Bifröst's own write is no Fluxer edit: nothing goes back.
+        assert.deepEqual(s.discordThreads.calls, []);
+        assert.equal(opCount((await s.cycle()).plan), 0);
+    });
+
+    /** Settles the forum, then edits the post on Fluxer as a person would. */
+    async function editedOnFluxer(
+        s: ReturnType<typeof setup>,
+        patch: { name?: string; locked?: boolean; pinned?: boolean }
+    ): Promise<string> {
+        s.useLinks();
+        await settle(s);
+        const copy = s.guild.snapshot.threads.find(
+            (t) => t.name === 'Patch notes'
+        );
+        assert.ok(copy);
+        await s.guild.updateThread(F_GUILD, copy.id, patch);
+        s.guild.calls.length = 0;
+        return copy.id;
+    }
+
+    const sourcePost = (s: ReturnType<typeof setup>) =>
+        s.discord.result.ok
+            ? s.discord.result.snapshot.threads.find((t) => t.id === 'post1')
+            : undefined;
+
+    it('writes a Fluxer edit of a post back to Discord, once', async () => {
+        const source = forumGuild();
+        const s = setup({
+            ...source,
+            threads: source.threads.map((t) =>
+                t.id === 'post1' ? { ...t, pinned: false } : t
+            ),
+        });
+        const copyId = await editedOnFluxer(s, {
+            name: 'Renamed on Fluxer',
+            locked: true,
+            pinned: true,
+        });
+        const { plan, applied } = await s.cycle();
+        assert.equal(applied?.failed, 0);
+        const back = plan.body.ops.filter((op) => op.op === 'write-back');
+        assert.equal(back.length, 1);
+        assert.deepEqual(s.discordThreads.calls, [
+            'write back post1 {"name":"Renamed on Fluxer","locked":true,"pinned":true}',
+        ]);
+        assert.equal(sourcePost(s)?.name, 'Renamed on Fluxer');
+        // Nothing went to Fluxer, and the base now holds the edit.
+        assert.deepEqual(s.guild.calls, []);
+        const row = s.store.rows.find((r) => r.fluxerId === copyId);
+        assert.equal(row?.appliedFields?.name, 'Renamed on Fluxer');
+        assert.ok(
+            s.store.audits.some(
+                (a) => a.op === 'write-back' && a.sourceId === 'post1'
+            )
+        );
+        const again = await s.cycle();
+        assert.equal(opCount(again.plan), 0);
+        assert.equal(s.discordThreads.calls.length, 1);
+    });
+
+    it('shows a write-back in a dry run without writing it', async () => {
+        const s = setup(forumGuild());
+        await editedOnFluxer(s, { name: 'Renamed on Fluxer' });
+        s.store.settings = { ...s.store.settings, mode: 'dry-run' };
+        const { plan, applied } = await s.cycle();
+        assert.equal(applied, undefined);
+        const back = plan.body.ops.find((op) => op.op === 'write-back');
+        assert.ok(back?.op === 'write-back');
+        assert.deepEqual(
+            back.changes.map((c) => c.field),
+            ['name']
+        );
+        assert.deepEqual(s.discordThreads.calls, []);
+        assert.equal(sourcePost(s)?.name, 'Patch notes');
+    });
+
+    it('writes nothing back with the kill switch on', async () => {
+        const s = setup(forumGuild());
+        await editedOnFluxer(s, { name: 'Renamed on Fluxer' });
+        s.store.settings = { ...s.store.settings, killSwitch: true };
+        const outcome = await runCycle(LINK, s.depsFor());
+        assert.equal(outcome.status, 'skipped');
+        assert.deepEqual(s.discordThreads.calls, []);
+    });
+
+    it('keeps Discord’s value when both sides renamed the post', async () => {
+        const s = setup(forumGuild());
+        const copyId = await editedOnFluxer(s, { name: 'Renamed on Fluxer' });
+        const source = forumGuild();
+        s.discord.result = {
+            ok: true,
+            snapshot: {
+                ...source,
+                threads: source.threads.map((t) =>
+                    t.id === 'post1' ? { ...t, name: 'Renamed on Discord' } : t
+                ),
+            },
+        };
+        const { plan } = await s.cycle();
+        assert.deepEqual(s.discordThreads.calls, []);
+        const copy = s.guild.snapshot.threads.find((t) => t.id === copyId);
+        assert.equal(copy?.name, 'Renamed on Discord');
+        assert.ok(plan.body.findings.some((f) => f.type === 'conflict'));
+    });
+
+    it('lets a write-back wait while there is no Discord thread writer', async () => {
+        const s = setup(forumGuild());
+        await editedOnFluxer(s, { locked: true });
+        s.noWriteBack();
+        const { applied } = await s.cycle();
+        assert.equal(applied?.failed, 0);
+        assert.ok(
+            applied?.skipped.some(
+                (x) =>
+                    x.op.op === 'write-back' && /not available/.test(x.reason)
+            )
+        );
+    });
+
+    it('reports a write-back Discord refused as a failed write', async () => {
+        const s = setup(forumGuild());
+        await editedOnFluxer(s, { locked: true });
+        s.discordThreads.fail = true;
+        const { applied } = await s.cycle();
+        assert.equal(applied?.failed, 1);
+        assert.match(applied?.failures[0]?.reason ?? '', /refused/);
+        assert.equal(sourcePost(s)?.locked, false);
+    });
+
+    it('holds a write-back while the post’s history import runs', async () => {
+        const s = setup(forumGuild());
+        await editedOnFluxer(s, { locked: true });
+        s.importing(new Set(['post1']));
+        const { plan } = await s.cycle();
+        assert.ok(!plan.body.ops.some((op) => op.op === 'write-back'));
+        assert.deepEqual(s.discordThreads.calls, []);
     });
 
     it('copies listed posts but removes none while a thread list is incomplete', async () => {

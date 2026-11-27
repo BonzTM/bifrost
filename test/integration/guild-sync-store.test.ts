@@ -362,6 +362,13 @@ describe('PostgresGuildSyncStore', { skip: !url }, () => {
         // Not mapped yet, but the active pair f-post names its thread.
         assert.equal(await history.threadImporting('f-post'), true);
         assert.equal(await history.threadImporting('f-other'), false);
+        // guild-sync holds write-backs of this thread's settings meanwhile.
+        assert.deepEqual(
+            [...(await history.threadsImporting(linkId))],
+            ['d-post']
+        );
+        const otherLink = '00000000-0000-4000-8000-000000000000';
+        assert.equal((await history.threadsImporting(otherLink)).size, 0);
         await history.updateJob(
             job.id,
             {
@@ -402,6 +409,7 @@ describe('PostgresGuildSyncStore', { skip: !url }, () => {
         assert.equal(await history.isOptedOut('author'), false);
         await history.updateJob(job.id, { status: 'done' }, now);
         assert.equal(await history.threadImporting('f-post'), false);
+        assert.equal((await history.threadsImporting(linkId)).size, 0);
     });
 
     it('tells history and the thread relay what the other copied', async () => {

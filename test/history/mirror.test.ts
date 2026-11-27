@@ -150,9 +150,16 @@ describe('HistoryEditor in a closed Fluxer thread', () => {
         };
         await store.startMessage(copy);
         const states: string[] = [];
-        const discord = { archived: true, locked: false };
+        /** The Fluxer thread's own state before the edit. */
+        const fluxer = archive
+            ? { archived: true, locked: true }
+            : { archived: true, locked: false };
+        const reads: string[] = [];
         const threads: EditorThreads = {
-            discordState: async () => discord,
+            fluxerState: async (linkId, id) => {
+                reads.push(`${linkId} ${id}`);
+                return { ...fluxer };
+            },
             setState: async (linkId, id, state) => {
                 states.push(`${linkId} ${id} ${JSON.stringify(state)}`);
             },
@@ -167,7 +174,7 @@ describe('HistoryEditor in a closed Fluxer thread', () => {
             };
         };
         const editor = new HistoryEditor(store, links, ports, threads);
-        return { copy, ports, states, discord, refuse, editor };
+        return { copy, ports, states, fluxer, reads, refuse, editor };
     }
 
     const OPENED = '{"archived":false,"locked":false}';
@@ -183,10 +190,13 @@ describe('HistoryEditor in a closed Fluxer thread', () => {
         ]);
     });
 
-    it('puts an imported thread back as it was: locked only, or archived as on Discord', async () => {
+    it('puts an imported thread back as it was on Fluxer, whatever Discord has', async () => {
         const s = await threadCopy('thread');
+        s.fluxer.archived = false;
+        s.fluxer.locked = true;
         s.refuse('THREAD_LOCKED');
         await s.editor.replace(s.copy, 'fixed');
+        assert.deepEqual(s.reads, ['link-1 f200']);
         assert.deepEqual(s.states, [
             `link-1 f200 ${OPENED}`,
             'link-1 f200 {"archived":false,"locked":true}',

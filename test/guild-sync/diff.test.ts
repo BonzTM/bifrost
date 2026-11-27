@@ -4,6 +4,8 @@ import { PermissionFlags } from '@fluxerjs/util';
 import { PermissionFlagsBits } from 'discord.js';
 import { compareFields, diff, type DiffInput } from '../../src/guild-sync/diff';
 import type { PlanOp } from '../../src/guild-sync/ops';
+import type { ThreadSnap } from '../../src/guild-sync/snapshot';
+import { compareThread } from '../../src/guild-sync/threadSettings';
 import {
     D_GUILD,
     F_GUILD,
@@ -364,5 +366,234 @@ describe('diff', () => {
                 (f) => f.type === 'category-full' && f.id === 'cat'
             )
         );
+    });
+});
+
+describe('thread settings, both ways', () => {
+    /** The post as both sides had it when the sync last wrote it. */
+    const look = {
+        name: 'Patch notes',
+        archived: false,
+        locked: false,
+        tags: ['news'],
+        private: false,
+        pinned: false,
+        rateLimitPerUser: 0,
+        autoArchiveDuration: 1440,
+    };
+
+    /** A synced post (or a thread in a text channel) and its copy. */
+    function pair(
+        source: Partial<ThreadSnap>,
+        dest: Partial<ThreadSnap>,
+        options: { where?: 'forum' | 'text'; fluxerTags?: string[] } = {}
+    ): DiffInput {
+        const where = options.where ?? 'forum';
+        const forum = { type: 15, tags: ['news', 'help'] };
+        return input({
+            source: discordGuild({
+                channels: [channel('d-forum', forum), channel('d-text')],
+                threads: [
+                    {
+                        id: 'd-post',
+                        parentId: `d-${where}`,
+                        ...look,
+                        ...source,
+                    },
+                ],
+            }),
+            destination: fluxerGuild({
+                channels: [
+                    channel('f-forum', {
+                        ...forum,
+                        tags: options.fluxerTags ?? forum.tags,
+                    }),
+                    channel('f-text'),
+                ],
+                threads: [
+                    { id: 'f-post', parentId: `f-${where}`, ...look, ...dest },
+                ],
+            }),
+            rows: [
+                mapRow('channel', 'd-forum', 'f-forum'),
+                mapRow('channel', 'd-text', 'f-text'),
+                mapRow('thread', 'd-post', 'f-post', {
+                    appliedFields: { ...look, parentId: `f-${where}` },
+                }),
+            ],
+        });
+    }
+
+    const threadOps = (result: ReturnType<typeof diff>) =>
+        result.ops.filter((op) => op.kind === 'thread');
+    const findingsOf = (result: ReturnType<typeof diff>) =>
+        result.findings.filter((f) => f.kind === 'thread');
+
+    it('writes a Fluxer edit back to Discord, with no drift', () => {
+        const result = diff(
+            pair({}, { name: 'Renamed on Fluxer', archived: true })
+        );
+        const [op, ...rest] = threadOps(result);
+        assert.deepEqual(rest, []);
+        assert.ok(op?.op === 'write-back');
+        assert.equal(op.sourceId, 'd-post');
+        assert.equal(op.destId, 'f-post');
+        assert.deepEqual(op.changes, [
+            { field: 'name', from: 'Patch notes', to: 'Renamed on Fluxer' },
+            { field: 'archived', from: false, to: true },
+        ]);
+        assert.equal(op.settled.name, 'Renamed on Fluxer');
+        assert.equal(op.settled.locked, false);
+        assert.deepEqual(findingsOf(result), []);
+    });
+
+    it('keeps Discord’s value when both sides changed a setting differently', () => {
+        const result = diff(
+            pair({ name: 'Renamed on Discord' }, { name: 'Renamed on Fluxer' })
+        );
+        const [op, ...rest] = threadOps(result);
+        assert.deepEqual(rest, []);
+        assert.ok(op?.op === 'update');
+        assert.deepEqual(op.changes, [
+            {
+                field: 'name',
+                from: 'Renamed on Fluxer',
+                to: 'Renamed on Discord',
+            },
+        ]);
+        const [finding] = findingsOf(result);
+        assert.equal(finding?.type, 'conflict');
+        assert.match(finding.detail, /both sides.*name/);
+    });
+
+    it('carries each side’s own edits when they touch different settings', () => {
+        const result = diff(pair({ name: 'Renamed' }, { locked: true }));
+        const ops = threadOps(result);
+        assert.deepEqual(
+            ops.map((op) => [
+                op.op,
+                op.op === 'update' || op.op === 'write-back'
+                    ? op.changes.map((c) => c.field)
+                    : [],
+            ]),
+            [
+                ['update', ['name']],
+                ['write-back', ['locked']],
+            ]
+        );
+        // Neither base takes the other side's pending edit.
+        const [update, back] = ops;
+        assert.ok(update.op === 'update' && back.op === 'write-back');
+        assert.equal(update.settled?.locked, undefined);
+        assert.equal(back.settled.name, undefined);
+    });
+
+    it('only records a value both sides changed alike', () => {
+        const result = diff(pair({ archived: true }, { archived: true }));
+        const [op, ...rest] = threadOps(result);
+        assert.deepEqual(rest, []);
+        assert.ok(op?.op === 'write-back');
+        assert.deepEqual(op.changes, []);
+        assert.equal(op.settled.archived, true);
+        assert.deepEqual(findingsOf(result), []);
+    });
+
+    it('plans nothing once the base holds what both sides agree on', () => {
+        const agreed = pair({ archived: true }, { archived: true });
+        const rows = agreed.rows.map((row) =>
+            row.kind === 'thread'
+                ? {
+                      ...row,
+                      appliedFields: {
+                          ...look,
+                          archived: true,
+                          parentId: 'f-forum',
+                      },
+                  }
+                : row
+        );
+        assert.deepEqual(threadOps(diff({ ...agreed, rows })), []);
+    });
+
+    it('never reverts a Fluxer edit with enforce on', () => {
+        const result = diff({
+            ...pair({}, { locked: true, rateLimitPerUser: 30 }),
+            enforceDrift: true,
+        });
+        const [op, ...rest] = threadOps(result);
+        assert.deepEqual(rest, []);
+        assert.ok(op?.op === 'write-back');
+        assert.deepEqual(
+            op.changes.map((c) => c.field),
+            ['locked', 'rateLimitPerUser']
+        );
+    });
+
+    it('reports a pin outside a forum as drift', () => {
+        const result = diff(pair({}, { pinned: true }, { where: 'text' }));
+        assert.deepEqual(threadOps(result), []);
+        const [finding] = findingsOf(result);
+        assert.equal(finding?.type, 'drift');
+        assert.match(finding.detail, /pinned/);
+    });
+
+    it('writes tags back only while both forums offer every tag', () => {
+        const extra = pair(
+            {},
+            { tags: ['fluxer-only', 'news'] },
+            { fluxerTags: ['news', 'help', 'fluxer-only'] }
+        );
+        assert.deepEqual(threadOps(diff(extra)), []);
+        assert.equal(findingsOf(diff(extra))[0]?.type, 'drift');
+        const shared = diff(pair({}, { tags: ['help', 'news'] }));
+        const [op] = threadOps(shared);
+        assert.ok(op?.op === 'write-back');
+        assert.deepEqual(op.changes, [
+            { field: 'tags', from: ['news'], to: ['help', 'news'] },
+        ]);
+    });
+
+    it('holds write-backs while the thread’s history import runs', () => {
+        const result = diff({
+            ...pair({ name: 'Renamed' }, { archived: true }),
+            importing: new Set(['d-post']),
+        });
+        assert.deepEqual(
+            threadOps(result).map((op) => op.op),
+            ['update']
+        );
+        const [finding] = findingsOf(result);
+        assert.equal(finding?.type, 'skipped');
+        assert.match(finding.detail, /archived.*history import/);
+    });
+});
+
+describe('compareThread', () => {
+    const all = new Set(['name', 'locked']);
+
+    it('reports a difference as drift when there is no base', () => {
+        const result = compareThread({ name: 'a' }, { name: 'b' }, null, all);
+        assert.deepEqual(result.forward, []);
+        assert.deepEqual(result.back, []);
+        assert.deepEqual(result.drifted, ['name']);
+    });
+
+    it('follows the source for a field the base lacks', () => {
+        const result = compareThread({ name: 'a' }, { name: 'b' }, {}, all);
+        assert.deepEqual(result.forward, [
+            { field: 'name', from: 'b', to: 'a' },
+        ]);
+        assert.deepEqual(result.conflicts, []);
+    });
+
+    it('reports a destination edit it may not write back as drift', () => {
+        const result = compareThread(
+            { invitable: true },
+            { invitable: false },
+            { invitable: true },
+            all
+        );
+        assert.deepEqual(result.back, []);
+        assert.deepEqual(result.drifted, ['invitable']);
     });
 });

@@ -77,6 +77,7 @@ export function pauseAfter(action: Write, kind: PlanOp['kind']): number {
         case 'link':
             return SLOW_WRITE_MS;
         case 'adopt':
+        case 'settle':
             return 0;
         case 'create-emoji':
         case 'create-sticker':
@@ -119,6 +120,12 @@ export interface ApplyDeps {
     readonly links: ChannelLinker | null;
     /** First messages of threads and posts, read from the source. */
     readonly threads: ThreadSource | null;
+    /**
+     * Writes destination thread edits back to the source thread (thread
+     * settings sync both ways, threadSettings.ts). Without it, write-backs
+     * wait for a later cycle.
+     */
+    readonly sourceThreads?: Pick<GuildWriter, 'updateThread'> | null;
     /** Checked before every write (guards 9, 10 and 15). */
     readonly canWrite: () => boolean;
     /** Checked before every write: false once the leader lock is lost. */
@@ -435,6 +442,25 @@ async function privateMembers(
     });
 }
 
+/** Writes destination thread edits back to the source thread. */
+async function writeBack(
+    state: RunState,
+    action: Extract<Write, { type: 'write-back-thread' }>,
+    op: PlanOp
+): Promise<void> {
+    if (op.op !== 'write-back') {
+        throw new Error(`a thread write-back cannot come from a ${op.op} op`);
+    }
+    const writer = state.deps.sourceThreads;
+    if (!writer) {
+        throw new NotReadyError(
+            'writing thread settings back to the source is not available'
+        );
+    }
+    const guildId = state.input.source.guildId;
+    await writer.updateThread(guildId, op.sourceId, action.patch);
+}
+
 /** Hard delete (guard 6). A channel loses its relay link first. */
 async function deleteObject(
     state: RunState,
@@ -501,6 +527,8 @@ async function performLifecycle(
             return linkChannels(state, op);
         case 'adopt':
             return action.destId;
+        case 'settle':
+            return null;
         case 'delete':
             await deleteObject(state, op, destId);
             return null;
@@ -596,6 +624,9 @@ async function perform(
         case 'archive-thread':
             await writer.updateThread(guildId, destId, action.patch);
             return null;
+        case 'write-back-thread':
+            await writeBack(state, action, op);
+            return null;
         default:
             return performLifecycle(state, action, op, destId);
     }
@@ -666,6 +697,11 @@ async function record(
 ): Promise<void> {
     const { plan } = state.input;
     const { store, now } = state.deps;
+    // A write-back only updates the base of a pair that is mapped.
+    if (op.op === 'write-back') {
+        await saveFields(state, op.kind, op.destId, applied);
+        return;
+    }
     if (op.op !== 'create' && op.op !== 'update') return;
     const destId = op.op === 'create' ? newId : op.destId;
     if (!destId) throw new Error(`create ${op.kind} returned no ID`);
@@ -726,7 +762,7 @@ async function settleOrder(
 }
 
 function auditFields(op: PlanOp, action: WriteAction): JsonValue {
-    if (op.op === 'update') {
+    if (op.op === 'update' || op.op === 'write-back') {
         return Object.fromEntries(op.changes.map((c) => [c.field, c.to]));
     }
     if (op.op === 'reorder') return [...op.destIds];
@@ -744,7 +780,7 @@ function auditBase(plan: Plan, op: PlanOp) {
         kind: op.kind,
         sourceId: 'sourceId' in op ? op.sourceId : null,
         before:
-            op.op === 'update'
+            op.op === 'update' || op.op === 'write-back'
                 ? Object.fromEntries(op.changes.map((c) => [c.field, c.from]))
                 : null,
     };

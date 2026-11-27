@@ -119,6 +119,14 @@ export type WriteAction =
           followUp: FollowUp | null;
       }
     | { readonly type: 'update-thread'; patch: ThreadPatch; applied: Fields }
+    /** Destination thread edits, written to the source thread. */
+    | {
+          readonly type: 'write-back-thread';
+          patch: ThreadPatch;
+          applied: Fields;
+      }
+    /** Records fields both sides already agree on. No write. */
+    | { readonly type: 'settle'; applied: Fields }
     | { readonly type: 'archive-thread'; patch: ThreadPatch }
     /** The object is already gone from the destination: nothing to write. */
     | { readonly type: 'gone' }
@@ -359,6 +367,7 @@ type CreateOp = Extract<PlanOp, { op: 'create' }>;
 type UpdateOp = Extract<PlanOp, { op: 'update' }>;
 type ReorderOp = Extract<PlanOp, { op: 'reorder' }>;
 type ArchiveOp = Extract<PlanOp, { op: 'archive' }>;
+type WriteBackOp = Extract<PlanOp, { op: 'write-back' }>;
 
 function createAction(op: CreateOp, ctx: WriteContext): WriteAction {
     // An empty base makes the next diff bring every field in line with
@@ -647,6 +656,20 @@ function expressionUpdate(op: UpdateOp, ctx: WriteContext): WriteAction {
     return skip(`a ${op.kind} cannot be updated`);
 }
 
+/**
+ * The source thread write a write-back needs. Each change carries the
+ * destination value; the source parent and privacy never change. Without
+ * changes, the agreed fields are only recorded.
+ */
+function writeBackAction(op: WriteBackOp): WriteAction {
+    if (op.changes.length === 0) {
+        return { type: 'settle', applied: op.settled };
+    }
+    const patch = threadPatch(op.changes);
+    if (Object.keys(patch).length === 0) return skip('nothing to write');
+    return { type: 'write-back-thread', patch, applied: op.settled };
+}
+
 /** A locked channel, moved to the archive; a category is renamed instead. */
 function archiveChannel(
     destId: string,
@@ -823,6 +846,8 @@ export function writeFor(op: PlanOp, ctx: WriteContext): WriteAction {
             return createAction(op, ctx);
         case 'update':
             return updateAction(op, ctx);
+        case 'write-back':
+            return writeBackAction(op);
         case 'reorder':
             return reorderAction(op, ctx);
         case 'link':

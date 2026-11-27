@@ -151,7 +151,7 @@ export function editorThreads(
     deps: Pick<HistoryDeps, 'listGuildLinks' | 'ports' | 'writer'>
 ): EditorThreads {
     return {
-        discordState: (id) => deps.ports.threadState(id),
+        fluxerState: (_linkId, id) => deps.ports.fluxerThreadState(id),
         setState: async (linkId, threadId, state) => {
             const links = await deps.listGuildLinks();
             const link = links.find((l) => l.id === linkId);

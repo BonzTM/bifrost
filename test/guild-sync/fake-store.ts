@@ -10,6 +10,10 @@ import { NoticeBoard } from '../../src/guild-sync/notices';
 import type { MapRow } from '../../src/guild-sync/ops';
 import type { Plan } from '../../src/guild-sync/plan';
 import type { GuildReader } from '../../src/guild-sync/readers/reader';
+import type {
+    GuildWriter,
+    ThreadPatch,
+} from '../../src/guild-sync/writers/writer';
 import type { GuildSnapshot } from '../../src/guild-sync/snapshot';
 import {
     LEADER_LOCK_KEY,
@@ -633,6 +637,34 @@ export class FakeReader implements GuildReader {
     async isGone(_guildId: string, _kind: string, id: string) {
         this.lookups += 1;
         return this.gone.has(id);
+    }
+}
+
+/**
+ * Discord's side of thread settings written back: edits the threads of a
+ * FakeReader's snapshot, so the next cycle reads them. Records each call.
+ */
+export class FakeSourceThreads implements Pick<GuildWriter, 'updateThread'> {
+    calls: string[] = [];
+    fail = false;
+
+    constructor(private readonly reader: FakeReader) {}
+
+    async updateThread(_guild: string, id: string, patch: ThreadPatch) {
+        if (this.fail) throw new Error('Discord refused the edit');
+        this.calls.push(`write back ${id} ${JSON.stringify(patch)}`);
+        const result = this.reader.result;
+        if (!result.ok) return;
+        const { tags, ...fields } = patch;
+        const threads = result.snapshot.threads.map((t) =>
+            t.id !== id
+                ? t
+                : { ...t, ...fields, tags: tags ? [...tags].sort() : t.tags }
+        );
+        this.reader.result = {
+            ok: true,
+            snapshot: { ...result.snapshot, threads },
+        };
     }
 }
 

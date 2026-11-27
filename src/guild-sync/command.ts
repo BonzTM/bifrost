@@ -98,8 +98,8 @@ export function describeStatus(
         `Mode: **${settings.mode}**, direction ${settings.direction}`,
         `Kill switch: **${settings.killSwitch ? 'on' : 'off'}**`,
         settings.enforceDrift
-            ? 'Drift: **enforced**. Fluxer edits to synced fields are reverted.'
-            : 'Drift: **reported**. Fluxer edits to synced fields are kept.',
+            ? 'Drift: **enforced**. Fluxer edits to synced fields are reverted; thread settings are written back to Discord.'
+            : 'Drift: **reported**. Fluxer edits to synced fields are kept; thread settings are written back to Discord.',
         settings.adminChannelId
             ? `Admin channel: <#${settings.adminChannelId}>`
             : 'Admin channel: not set. Plans are only logged.',

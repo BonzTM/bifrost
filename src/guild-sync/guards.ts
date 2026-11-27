@@ -246,7 +246,7 @@ export function enforceOwnership(
         });
     for (const op of ops) {
         if (op.op === 'create') kept.push(op);
-        else if (op.op === 'update') {
+        else if (op.op === 'update' || op.op === 'write-back') {
             if (map.mayUpdate(op.kind, op.destId)) kept.push(op);
             else drop(op, op.destId);
         } else if (op.op === 'reorder') {

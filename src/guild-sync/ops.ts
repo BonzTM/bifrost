@@ -55,6 +55,22 @@ export type PlanOp =
           readonly baseline?: true;
       }
     | {
+          /**
+           * Thread settings edited on the destination only, written back
+           * to the source thread: thread settings sync both ways
+           * (threadSettings.ts). Each change runs from the source value
+           * to the destination value. With no changes, the op writes
+           * nothing and only records fields both sides already agree on.
+           */
+          readonly op: 'write-back';
+          readonly kind: 'thread';
+          readonly sourceId: string;
+          readonly destId: string;
+          readonly changes: readonly FieldChange[];
+          /** The base recorded once the write-back succeeded. */
+          readonly settled: { readonly [field: string]: JsonValue };
+      }
+    | {
           readonly op: 'reorder';
           readonly kind: 'role' | 'channel';
           /** 'roles', 'top' or the destination category ID. */
@@ -90,6 +106,8 @@ export type PlanOp =
 
 export type FindingType =
     | 'drift'
+    /** A thread setting edited on both sides at once; the source wins. */
+    | 'conflict'
     | 'skipped'
     | 'missing-on-destination'
     | 'category-full'

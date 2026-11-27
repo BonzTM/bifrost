@@ -508,9 +508,12 @@ describe('the cycle after a mirror', () => {
         pinned: false,
     });
 
-    function plan(mapping: NewMapping, copy: ThreadSnap) {
+    function plan(
+        mapping: NewMapping,
+        copy: ThreadSnap,
         // The diff reads the snapshot fields; ownerId and forum go unread.
-        const fluxerThread: ThreadSnap = original;
+        fluxerThread: ThreadSnap = original
+    ) {
         return diff({
             source: discordGuild({
                 channels: [channel('d-forum', { type: 15 })],
@@ -570,6 +573,68 @@ describe('the cycle after a mirror', () => {
             op.changes.map((c) => c.field),
             ['name']
         );
+    });
+
+    it('writes back to Discord the settings the copy did not take', async () => {
+        const s = await setup(original);
+        await s.relay.created('fluxer', inFluxerPost('f-post'), 'starter');
+        const mapping = s.store.mappings[0];
+        assert.ok(mapping);
+        const copy = {
+            id: 'd-post',
+            parentId: 'd-forum',
+            ...discordLook(original),
+        };
+        const result = plan(mapping, copy);
+        const ops = result.ops.filter((op) => op.kind === 'thread');
+        assert.equal(ops.length, 1);
+        const op = ops[0];
+        assert.ok(op.op === 'write-back');
+        assert.deepEqual(
+            op.changes.map((c) => c.field),
+            ['locked', 'rateLimitPerUser', 'autoArchiveDuration']
+        );
+        // Neither forum offers the tags, so they are only reported.
+        assert.ok(
+            result.findings.some(
+                (f) => f.type === 'drift' && /tags/.test(f.detail)
+            )
+        );
+    });
+
+    it('carries a later change made on Fluxer to Discord', async () => {
+        const s = await setup(original);
+        // This copy took every setting of the Fluxer post.
+        const took = (info: FluxerThreadInfo): ThreadLook => ({
+            ...discordLook(info),
+            locked: info.locked,
+            tags: [...info.tags],
+            rateLimitPerUser: info.rateLimitPerUser ?? 0,
+            autoArchiveDuration: info.autoArchiveDuration ?? 1440,
+        });
+        s.state.look = took;
+        await s.relay.created('fluxer', inFluxerPost('f-post'), 'starter');
+        const mapping = s.store.mappings[0];
+        assert.ok(mapping);
+        const copy = { id: 'd-post', parentId: 'd-forum', ...took(original) };
+        assert.deepEqual(
+            plan(mapping, copy).ops.filter((op) => op.kind === 'thread'),
+            []
+        );
+        const renamed = { ...original, name: 'Renamed on Fluxer' };
+        const ops = plan(mapping, copy, renamed).ops.filter(
+            (op) => op.kind === 'thread'
+        );
+        assert.equal(ops.length, 1);
+        const op = ops[0];
+        assert.ok(op.op === 'write-back');
+        assert.deepEqual(op.changes, [
+            {
+                field: 'name',
+                from: 'LAN this weekend?',
+                to: 'Renamed on Fluxer',
+            },
+        ]);
     });
 });
 

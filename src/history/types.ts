@@ -237,6 +237,8 @@ export interface HistoryPorts {
     threadState(
         discordThreadId: string
     ): Promise<{ archived: boolean; locked: boolean }>;
+    /** Whether a Fluxer thread is archived and locked right now. */
+    fluxerThreadState(fluxerThreadId: string): Promise<ThreadFlags>;
     /** When the channel's bridge was made, or null when it has none. */
     linkCreatedAt(discordChannelId: string): Promise<Date | null>;
     /**

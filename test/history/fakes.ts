@@ -430,6 +430,21 @@ export class FakeHistoryPorts implements HistoryPorts {
         return this.threadStates.get(id) ?? { archived: false, locked: false };
     }
 
+    /** Fluxer thread states by thread ID; open when not set. */
+    readonly fluxerThreadStates = new Map<
+        string,
+        { archived: boolean; locked: boolean }
+    >();
+
+    async fluxerThreadState(id: string) {
+        return (
+            this.fluxerThreadStates.get(id) ?? {
+                archived: false,
+                locked: false,
+            }
+        );
+    }
+
     /** Bridge webhooks found in each Discord channel, by name or owner. */
     readonly bridgeHooks = new Map<string, string[]>();
 

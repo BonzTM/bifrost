@@ -84,7 +84,7 @@ async function world() {
     const pauses: number[] = [];
     const states: string[] = [];
     const threads: EditorThreads = {
-        discordState: async () => ({ archived: true, locked: false }),
+        fluxerState: async () => ({ archived: true, locked: true }),
         setState: async (linkId, id, flags) => {
             states.push(`${linkId} ${id} ${JSON.stringify(flags)}`);
         },
