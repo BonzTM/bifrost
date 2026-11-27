@@ -1,5 +1,6 @@
 import { QueryTypes, type Sequelize } from 'sequelize';
 import { TABLES } from '../addons/db/schema';
+import type { DiscordNames } from './names';
 
 /** One Fluxer copy of a Discord member's message. */
 export interface CopyRef {
@@ -151,6 +152,29 @@ export class PostgresNameStore {
             { bind: [discordUserId], type: QueryTypes.SELECT }
         );
         return rows.length > 0;
+    }
+
+    /**
+     * The names the archive last saw for a member, for an account Discord
+     * no longer has (deleted users). Null when the archive never saw them.
+     */
+    async archivedNames(
+        guildId: string,
+        discordUserId: string
+    ): Promise<DiscordNames | null> {
+        const rows = await this.db.query<Row>(
+            `SELECT username, "globalName", nick FROM ${TABLES.archiveMembers}
+             WHERE "guildId" = $1 AND "userId" = $2 LIMIT 1`,
+            { bind: [guildId, discordUserId], type: QueryTypes.SELECT }
+        );
+        const row = rows[0];
+        if (!row || typeof row.username !== 'string' || row.username === '')
+            return null;
+        return {
+            nick: optText(row, 'nick'),
+            globalName: optText(row, 'globalName'),
+            username: row.username,
+        };
     }
 
     /** Every Fluxer copy bifrost made of this author's messages on a link. */

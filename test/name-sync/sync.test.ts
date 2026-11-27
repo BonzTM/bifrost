@@ -117,6 +117,7 @@ function harness(fields: {
     optedOut?: boolean;
     names?: boolean;
     due?: number;
+    archived?: boolean;
 }) {
     const applied: [string, string | null][] = [];
     const failed: string[] = [];
@@ -141,6 +142,10 @@ function harness(fields: {
             },
             isOptedOut: async () => fields.optedOut === true,
             copies: async () => [copy('1'), recent],
+            archivedNames: async () =>
+                fields.archived
+                    ? { nick: null, globalName: 'Old Name', username: 'old' }
+                    : null,
         },
         writer: {
             rename: async (copies, name) => {
@@ -186,6 +191,13 @@ describe('NameSync', () => {
         await h.sync.pass(LINK);
         assert.deepEqual(h.failed, ['500']);
         assert.deepEqual(h.applied, []);
+    });
+
+    it('uses the archived name for an account Discord no longer has', async () => {
+        const h = harness({ names: false, archived: true });
+        await h.sync.pass(LINK);
+        assert.deepEqual(h.applied, [['500', 'Old Name']]);
+        assert.deepEqual(h.failed, []);
     });
 
     it('reports more work when more authors are due', async () => {
