@@ -394,6 +394,12 @@ describe('history rewrite on Postgres', { skip: !url }, () => {
         ]);
     });
 
+    it("finds each channel's oldest rewritten copy, for the bucket step", async () => {
+        await job(true).run();
+        const oldest = await new BifrostSource(bifrost).oldestNative();
+        assert.deepEqual([...oldest], [[CHANNEL, D1]]);
+    });
+
     it('does nothing more on a second run', async () => {
         await job(true).run();
         const again = await job(true).run();

@@ -3,6 +3,7 @@
  *
  *   node dist/history-rewrite/cli.js            # dry run: plans, writes nothing
  *   node dist/history-rewrite/cli.js --apply    # writes; bifrost and Fluxer must be stopped
+ *   node dist/history-rewrite/cli.js --buckets  # lowers created_bucket again, before a search rebuild
  *
  * Bifrost's database: BF_DB_HOST, BF_DB_PORT, BF_DB_NAME, BF_DB_USER and
  * BF_DB_PASS (or BF_DB_PASS_FILE). Fluxer's database: BF_FLUXER_DB_HOST,
@@ -12,7 +13,8 @@
  */
 import { readFileSync } from 'node:fs';
 import { QueryTypes, Sequelize, type Transaction } from 'sequelize';
-import { snowflake } from '../fluxer-db/keys';
+import { bucketOf, snowflake } from '../fluxer-db/keys';
+import { lowerCreatedBucket } from './channelState';
 import { RewriteJob, type FluxerSide } from './job';
 import { BifrostSource, otherSessions } from './sources';
 
@@ -89,8 +91,35 @@ function fluxerSide(db: Sequelize): FluxerSide {
     };
 }
 
+/**
+ * Fluxer resets created_bucket on every new message, and its search
+ * rebuild never scans below it (docs/design/history-rewrite.md). This sets
+ * it back to each channel's oldest rewritten copy.
+ */
+async function lowerBuckets(bifrostDb: Sequelize, fluxerDb: Sequelize) {
+    const oldest = await new BifrostSource(bifrostDb).oldestNative();
+    const side = fluxerSide(fluxerDb);
+    await side.transaction(async (tx) => {
+        for (const [channelId, messageId] of oldest) {
+            await lowerCreatedBucket(tx, channelId, bucketOf(messageId));
+        }
+    });
+    console.log(JSON.stringify({ mode: 'buckets', channels: oldest.size }));
+}
+
 async function main(): Promise<void> {
     const apply = process.argv.includes('--apply');
+    if (process.argv.includes('--buckets')) {
+        const bifrostDb = connect('BF_DB', 'bifrost-history-rewrite');
+        const fluxerDb = connect('BF_FLUXER_DB', 'bifrost-history-rewrite');
+        try {
+            await lowerBuckets(bifrostDb, fluxerDb);
+        } finally {
+            await bifrostDb.close();
+            await fluxerDb.close();
+        }
+        return;
+    }
     const botUserId = env('BF_FLUXER_APP_ID');
     snowflake(botUserId);
     const bifrostDb = connect('BF_DB', 'bifrost-history-rewrite');

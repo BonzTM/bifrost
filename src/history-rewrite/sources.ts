@@ -136,6 +136,22 @@ export class BifrostSource {
         );
     }
 
+    /**
+     * The oldest rewritten copy per Fluxer channel, for lowering each
+     * channel's created_bucket again before a later search rebuild.
+     */
+    async oldestNative(): Promise<Map<string, string>> {
+        const rows = await this.db.query<Row>(
+            `SELECT "fluxerTargetId", min("discordMessageId"::numeric)::text AS oldest
+             FROM ${TABLES.historyMessages} WHERE native
+             GROUP BY "fluxerTargetId"`,
+            { type: QueryTypes.SELECT }
+        );
+        return new Map(
+            rows.map((r) => [text(r, 'fluxerTargetId'), text(r, 'oldest')])
+        );
+    }
+
     /** Other sessions on bifrost's database; the bot must be stopped. */
     async otherSessions(): Promise<string[]> {
         return otherSessions(this.db);
