@@ -10,6 +10,7 @@ import {
     liveCopies,
 } from '../../src/name-sync/sync';
 import { FluxerNameWriter, NAME_BATCH } from '../../src/name-sync/writer';
+import { copyRoutes } from '../../src/name-sync';
 import { createRecordingLogger } from '../addons/fakes';
 
 const NOW = new Date('2026-11-27T12:00:00Z');
@@ -191,5 +192,18 @@ describe('NameSync', () => {
         const h = harness({ due: AUTHORS_PER_PASS + 3 });
         assert.equal(await h.sync.pass(LINK), true);
         assert.equal(h.applied.length, AUTHORS_PER_PASS);
+    });
+});
+
+describe('copy routes', () => {
+    it('tries the channel route, then the thread route', () => {
+        const routes = copyRoutes(copy('900'));
+        assert.equal(routes.length, 2);
+        assert.match(routes[0] ?? '', /\/webhooks\/7\/t\/messages\/900$/);
+        assert.match(routes[1] ?? '', /\/messages\/900\?thread_id=100$/);
+    });
+
+    it('has none without a webhook token', () => {
+        assert.deepEqual(copyRoutes(copy('900', null)), []);
     });
 });

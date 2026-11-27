@@ -83,20 +83,41 @@ function fluxerPorts(deps: NameSyncAddonDeps): NameSyncPorts {
         names: (guildId, userId) =>
             discordNames(deps.discordClient, guildId, userId),
         refresh: async (copy: CopyRef) => {
-            if (!copy.webhookId || !copy.webhookToken) return;
-            const route = `${Routes.webhookExecute(copy.webhookId, copy.webhookToken)}/messages/${copy.messageId}`;
-            const current = (await fluxer().rest.get(route, {
-                auth: false,
-            })) as {
-                flags?: unknown;
-            };
-            const flags = typeof current.flags === 'number' ? current.flags : 0;
-            await fluxer().rest.patch(route, {
-                body: { flags: flags & SENDABLE_FLAGS },
-                auth: false,
-            });
+            const routes = copyRoutes(copy);
+            for (const [i, route] of routes.entries()) {
+                try {
+                    await flagsOnlyEdit(fluxer(), route);
+                    return;
+                } catch (error) {
+                    if (!isNotFound(error) || i === routes.length - 1)
+                        throw error;
+                }
+            }
         },
     };
+}
+
+/**
+ * The webhook routes for one copy: as a channel message, then as a message
+ * in a thread. A webhook edit in a thread needs `thread_id`, and the copy
+ * table does not say which copies are in threads.
+ */
+export function copyRoutes(copy: CopyRef): string[] {
+    if (!copy.webhookId || !copy.webhookToken) return [];
+    const base = `${Routes.webhookExecute(copy.webhookId, copy.webhookToken)}/messages/${copy.messageId}`;
+    return [base, `${base}?thread_id=${encodeURIComponent(copy.channelId)}`];
+}
+
+/** Re-sends a copy's own sendable flags, so Fluxer pushes a MESSAGE_UPDATE. */
+async function flagsOnlyEdit(client: FluxerClient, route: string) {
+    const current = (await client.rest.get(route, { auth: false })) as {
+        flags?: unknown;
+    };
+    const flags = typeof current.flags === 'number' ? current.flags : 0;
+    await client.rest.patch(route, {
+        body: { flags: flags & SENDABLE_FLAGS },
+        auth: false,
+    });
 }
 
 /** Links whose writes are on: name sync only changes copies in apply. */
