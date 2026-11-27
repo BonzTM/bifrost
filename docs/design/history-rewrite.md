@@ -77,6 +77,24 @@ messages with 2019 IDs. The job skips every copy in a thread channel
 line. Moving them needs each thread re-keyed to its Discord thread ID first,
 which is a separate change.
 
+### Threads (`--threads`)
+
+A second pass moves each guild-sync thread to its Discord thread's ID, so
+its copies can then take theirs. A forum post's first message shares the
+thread's ID on both platforms, so it moves with the thread. Each thread's
+ID is in about 20 fluxer_kv tables (threads, members, channel state,
+buckets, messages, reactions, pins, attachment lookups and decay rows,
+read states, the parent's THREAD_CREATED message). The job rebuilds every
+key from the row and refuses a row whose stored key it cannot rebuild.
+Threads a webhook owns are given to the bot, so copies no longer all show
+the OP tag (`fluxer_app/.../ForumChannelUtils.ts:77-81`).
+
+Fluxer serves a file from `attachments/{channelId}/...` of its message's
+channel, so `deploy/copy-thread-files.mjs` copies each moved thread's files
+to the new path first (`--thread-files` lists them). The thread archive
+queue in Valkey and the search documents under old IDs are cleared, and
+the forum post search is rebuilt on its next use.
+
 ### Search
 
 Fluxer's own listing for search reindexing never scans below
