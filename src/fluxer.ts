@@ -48,6 +48,8 @@ import { DbStatsService } from './services/DbStatsService';
 import { isRelayedFluxerChannel } from './relay-extras/channels';
 // Fork: tells real edits from pin and preview updates.
 import { isContentEdit } from './relay-extras/edits';
+// Fork hook: relay catch-up (src/relay-extras/catchUp).
+import type { CatchUpHooks } from './relay-extras/catchUp/gate';
 
 /** Fork: the Fluxer REST request limit, long enough for a 50 MiB upload. */
 const FLUXER_REST_TIMEOUT_MS = 120_000;
@@ -63,6 +65,8 @@ const startFluxerClient = async ({
     discordStatsService,
     fluxerStatsService,
     dbStatsService,
+    // Fork hook: relay catch-up (src/relay-extras/catchUp).
+    catchUp,
 }: {
     linkService: LinkService;
     webhookService: WebhookService;
@@ -74,6 +78,7 @@ const startFluxerClient = async ({
     discordStatsService: DiscordStatsService;
     fluxerStatsService: FluxerStatsService;
     dbStatsService: DbStatsService;
+    catchUp?: CatchUpHooks;
 }): Promise<Client> => {
     const clientOptions: ClientOptions = {
         intents: 0,
@@ -119,6 +124,12 @@ const startFluxerClient = async ({
         queueService,
         discordEntityResolver,
     });
+    // Fork: catch-up relays through this same relay; live copies wait
+    // behind a running catch-up of their channel (src/relay-extras/catchUp).
+    // A restarted client binds its new relay in place of the old one.
+    const relayLive = catchUp
+        ? catchUp.fluxer.bind(messageRelay)
+        : (message: Message) => messageRelay.relayMessage(message);
 
     const commandRegistry = new CommandRegistry<FluxerCommandHandler>();
     commandRegistry.registerCommand(
@@ -353,7 +364,7 @@ const startFluxerClient = async ({
             isRelayedFluxerChannel(message.channel) &&
             !isCommandString(message.content, COMMAND_PREFIX)
         ) {
-            await messageRelay.relayMessage(message);
+            await relayLive(message); // Fork: see relayLive
         }
     });
 

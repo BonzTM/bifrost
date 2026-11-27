@@ -41,6 +41,8 @@ import type { DiscordClientExtension } from './addons/bootstrap';
 import { isContentEdit } from './relay-extras/edits';
 // Fork: keeps upstream commands out of DMs (src/addons/intents.ts).
 import { upstreamCommandAllowed } from './addons/intents';
+// Fork hook: relay catch-up (src/relay-extras/catchUp).
+import type { CatchUpHooks } from './relay-extras/catchUp/gate';
 
 const startDiscordClient = async ({
     linkService,
@@ -55,6 +57,8 @@ const startDiscordClient = async ({
     dbStatsService,
     // Fork hook: what the enabled add-ons add (src/addons/bootstrap.ts).
     extend = {},
+    // Fork hook: relay catch-up (src/relay-extras/catchUp).
+    catchUp,
 }: {
     linkService: LinkService;
     webhookService: WebhookService;
@@ -68,6 +72,7 @@ const startDiscordClient = async ({
     dbStatsService: DbStatsService;
     // Fork hook: add-on intents, partials and commands.
     extend?: Partial<DiscordClientExtension>;
+    catchUp?: CatchUpHooks;
 }): Promise<Client> => {
     const client = new Client({
         intents: [
@@ -106,6 +111,12 @@ const startDiscordClient = async ({
         queueService,
         fluxerEntityResolver,
     });
+    // Fork: catch-up relays through this same relay; live copies wait
+    // behind a running catch-up of their channel (src/relay-extras/catchUp).
+    const relayLive = catchUp
+        ? catchUp.discord.bind(messageRelay)
+        : (message: Parameters<typeof messageRelay.relayMessage>[0]) =>
+              messageRelay.relayMessage(message);
 
     const commandRegistry = new CommandRegistry<DiscordCommandHandler>();
     commandRegistry.registerCommand(
@@ -344,7 +355,7 @@ const startDiscordClient = async ({
             isRelayedDiscordChannel(message.channel) &&
             !isCommandString(message.content, COMMAND_PREFIX)
         ) {
-            await messageRelay.relayMessage(message);
+            await relayLive(message); // Fork: see relayLive
         }
     });
 

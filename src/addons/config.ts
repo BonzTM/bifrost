@@ -81,7 +81,7 @@ const FALSE_VALUES = ['false', '0', 'no', ''];
 const ENV_MODES = ['read-only', 'dry-run'] as const;
 
 /** Parses a strict boolean. Unknown values are an error, never false. */
-function parseStrictBool(
+export function parseStrictBool(
     name: string,
     value: string | undefined
 ): { ok: true; value: boolean } | { ok: false; error: string } {

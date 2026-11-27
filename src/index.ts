@@ -39,6 +39,8 @@ import logger from './utils/logging/logger';
 import { forkInit } from './addons/fork';
 import DiscordStatsService from './services/statsService/DiscordStatsService';
 import FluxerStatsService from './services/statsService/FluxerStatsService';
+// Fork hook: relay catch-up after downtime (src/relay-extras/catchUp).
+import { forkCatchUp } from './relay-extras/catchUp/fork';
 
 process.on('unhandledRejection', (reason) => {
     logger.error('Unhandled promise rejection:', reason);
@@ -90,6 +92,9 @@ const main = async () => {
         cachedChannelLinkRepo,
         cachedMessageLinkRepo
     );
+    // Fork hook: reads BF_RELAY_CATCH_UP* and notes the start time, before
+    // either client can relay a live message.
+    const catchUp = forkCatchUp(linkService);
     const webhookService = new WebhookService();
     const discordEntityResolver = new DiscordEntityResolver();
     const fluxerEntityResolver = new FluxerEntityResolver();
@@ -115,6 +120,8 @@ const main = async () => {
         discordStatsService,
         fluxerStatsService,
         dbStatsService,
+        // Fork hook: live copies wait behind a channel's catch-up.
+        catchUp: catchUp.hooks,
     };
 
     const fluxerClientRef: { current: FluxerClient | null } = { current: null };
@@ -224,6 +231,8 @@ const main = async () => {
             dbStatsService,
             // Fork hook: add-on intents, partials and commands.
             extend: fork.discordExtension(linkService),
+            // Fork hook: live copies wait behind a channel's catch-up.
+            catchUp: catchUp.hooks,
         }),
         connectFluxer(),
     ]);
@@ -243,6 +252,10 @@ const main = async () => {
         discordEntityResolver,
         fluxerEntityResolver,
     });
+
+    // Fork hook: after the add-ons, so caught-up copies get the same message
+    // fidelity as live ones. Runs in the background and never rejects.
+    void catchUp.start({ discordClient, fluxerClientRef });
 
     if (ENABLE_WEB_DASHBOARD) {
         const webApp = createWebApp({
